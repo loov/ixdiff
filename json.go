@@ -120,7 +120,7 @@ func funcReport(p *fndiff.Pair, a *analysis, withDiff bool) jsonFuncReport {
 		r.InstDelta = &a.instDelta
 		r.OpDelta = a.opDelta
 	}
-	if withDiff && p.State == fndiff.StateChanged && !a.noise {
+	if withDiff && !a.noise {
 		for _, l := range diffLines(a) {
 			r.Diff = append(r.Diff, jsonDiffLine{
 				Op:      opNames[l.op],

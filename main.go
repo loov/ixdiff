@@ -176,12 +176,20 @@ func (c *cmdDiff) writeJSONFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *ob
 		withDiff := len(matches) == 1
 		for _, p := range matches {
 			var a *analysis
-			if p.State == fndiff.StateChanged {
+			switch p.State {
+			case fndiff.StateChanged:
 				analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, c.norm())
 				if err != nil {
 					return err
 				}
 				a = analyzed[0]
+			case fndiff.StateAdded, fndiff.StateRemoved:
+				if withDiff {
+					var err error
+					if a, err = listing(p, old, new, c.norm()); err != nil {
+						return err
+					}
+				}
 			}
 			reports = append(reports, funcReport(p, a, withDiff))
 		}
@@ -297,22 +305,28 @@ func levenshtein(a, b string) int {
 // writeFunc reports one function pair: a note for identical, added,
 // and removed functions, a full assembly diff for changed ones.
 func (c *cmdDiff) writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary) error {
+	var a *analysis
 	switch p.State {
 	case fndiff.StateIdentical:
 		fmt.Fprintf(w, "%s is byte-identical in both binaries\n", p.Name)
 		return nil
 	case fndiff.StateAdded, fndiff.StateRemoved:
 		fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta())
-		return nil
-	}
-	analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, c.norm())
-	if err != nil {
-		return err
+		var err error
+		if a, err = listing(p, old, new, c.norm()); err != nil {
+			return err
+		}
+	default:
+		analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, c.norm())
+		if err != nil {
+			return err
+		}
+		a = analyzed[0]
 	}
 	if c.sideBy {
-		writeFuncDiffSide(w, analyzed[0])
+		writeFuncDiffSide(w, a)
 	} else {
-		writeFuncDiff(w, analyzed[0])
+		writeFuncDiff(w, a)
 	}
 	return nil
 }

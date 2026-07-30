@@ -95,6 +95,13 @@ func TestPipeline_SingleFunctionDiff(t *testing.T) {
 	if main < 0 || sum < 0 || sum < main {
 		t.Errorf("expected main.main diff followed by main.sum report:\n%s", out)
 	}
+
+	// An added function prints a full all-insert listing.
+	out = run(t, "--fn", "main.sum", base, noinline)
+	if !strings.Contains(out, "--- main.sum (absent)") ||
+		!regexp.MustCompile(`(?m)^\+[0-9a-f]+: RET`).MatchString(out) {
+		t.Errorf("expected full listing for added main.sum:\n%s", out)
+	}
 }
 
 func TestPipeline_MissingFunctionErrors(t *testing.T) {

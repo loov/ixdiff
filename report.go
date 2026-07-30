@@ -84,6 +84,35 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 	return results, nil
 }
 
+// listing builds an all-insert (added) or all-delete (removed)
+// analysis so single-sided functions can render as a full assembly
+// listing in --fn mode.
+func listing(p *fndiff.Pair, old, new *objfile.Binary, opts disasm.Options) (*analysis, error) {
+	fn, bin, op := p.New, new, fndiff.OpInsert
+	if p.State == fndiff.StateRemoved {
+		fn, bin, op = p.Old, old, fndiff.OpDelete
+	}
+	insts, err := disasm.Decode(bin.Arch, fn.Code(), fn.Addr, disasm.Lookup(bin))
+	if err != nil {
+		return nil, fmt.Errorf("disassembling %s: %w", p.Name, err)
+	}
+	opts.IsAddr = bin.Contains
+	a := &analysis{pair: p}
+	for _, text := range disasm.Normalize(p.Name, insts, opts) {
+		a.edits = append(a.edits, fndiff.Edit{Op: op, Text: text})
+	}
+	if op == fndiff.OpInsert {
+		a.newAddrs = addrs(insts)
+		a.instDelta = countInsts(insts)
+		a.opDelta = fndiff.OpCount{}.Delta(fndiff.CountOps(ops(insts)))
+	} else {
+		a.oldAddrs = addrs(insts)
+		a.instDelta = -countInsts(insts)
+		a.opDelta = fndiff.CountOps(ops(insts)).Delta(fndiff.OpCount{})
+	}
+	return a, nil
+}
+
 // alignLabels renders both sides of a changed function with branch
 // labels derived from an instruction alignment, so that a branch whose
 // target is structurally unchanged gets the same label on both sides
@@ -406,9 +435,7 @@ func hunks(lines []diffLine) [][]diffLine {
 // writeFuncDiff prints a unified-style diff of one function, grouped
 // into hunks with an address column.
 func writeFuncDiff(w io.Writer, a *analysis) {
-	p := a.pair
-	fmt.Fprintf(w, "--- %s (%d bytes)\n", p.Name, p.Old.Size)
-	fmt.Fprintf(w, "+++ %s (%d bytes)\n", p.Name, p.New.Size)
+	writeDiffHeader(w, a.pair)
 	if a.noise {
 		fmt.Fprintf(w, "bytes differ only by relocation; normalized assembly is identical\n")
 		return
@@ -449,6 +476,21 @@ func alignOps(texts []string) []string {
 		out[i] = op + strings.Repeat(" ", width-len(op)+1) + args
 	}
 	return out
+}
+
+// writeDiffHeader prints the ---/+++ header; an absent side (added or
+// removed function) is marked as such.
+func writeDiffHeader(w io.Writer, p *fndiff.Pair) {
+	if p.Old != nil {
+		fmt.Fprintf(w, "--- %s (%d bytes)\n", p.Name, p.Old.Size)
+	} else {
+		fmt.Fprintf(w, "--- %s (absent)\n", p.Name)
+	}
+	if p.New != nil {
+		fmt.Fprintf(w, "+++ %s (%d bytes)\n", p.Name, p.New.Size)
+	} else {
+		fmt.Fprintf(w, "+++ %s (absent)\n", p.Name)
+	}
 }
 
 // hunkRange describes a hunk by the first old- and new-side addresses
@@ -512,9 +554,7 @@ const sideColumnWidth = 60
 // space for unchanged rows, < for deletions, > for insertions, and |
 // for replacements.
 func writeFuncDiffSide(w io.Writer, a *analysis) {
-	p := a.pair
-	fmt.Fprintf(w, "--- %s (%d bytes)\n", p.Name, p.Old.Size)
-	fmt.Fprintf(w, "+++ %s (%d bytes)\n", p.Name, p.New.Size)
+	writeDiffHeader(w, a.pair)
 	if a.noise {
 		fmt.Fprintf(w, "bytes differ only by relocation; normalized assembly is identical\n")
 		return
