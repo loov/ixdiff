@@ -4,9 +4,11 @@
 package objfile
 
 import (
+	"cmp"
 	"debug/elf"
 	"fmt"
 	"os"
+	"slices"
 )
 
 // Arch identifies the instruction set of a binary.
@@ -85,8 +87,39 @@ func Open(path string) (*Binary, error) {
 	switch {
 	case string(magic) == elf.ELFMAG:
 		return openELF(f)
+	case string(magic) == "\xcf\xfa\xed\xfe" || string(magic) == "\xfe\xed\xfa\xcf":
+		return openMachO(f)
+	case magic[0] == 'M' && magic[1] == 'Z':
+		return openPE(f)
 	default:
 		return nil, fmt.Errorf("unsupported binary format in %q", path)
+	}
+}
+
+// sizelessSym is a symbol from a format that does not record sizes
+// (Mach-O, PE).
+type sizelessSym struct {
+	name string
+	addr uint64
+}
+
+// addSizeless records functions whose sizes are unknown, inferring each
+// size as the distance to the next symbol, and the end of the text
+// section for the last one. Exact ranges for Go binaries come from the
+// pclntab instead; this is the fallback for non-Go symbols.
+func (b *Binary) addSizeless(syms []sizelessSym) {
+	syms = slices.DeleteFunc(syms, func(s sizelessSym) bool {
+		return s.addr < b.textAddr || s.addr >= b.textAddr+uint64(len(b.text))
+	})
+	slices.SortFunc(syms, func(x, y sizelessSym) int {
+		return cmp.Compare(x.addr, y.addr)
+	})
+	for i, sym := range syms {
+		end := b.textAddr + uint64(len(b.text))
+		if i+1 < len(syms) {
+			end = syms[i+1].addr
+		}
+		b.addFunc(sym.name, sym.addr, end-sym.addr)
 	}
 }
 

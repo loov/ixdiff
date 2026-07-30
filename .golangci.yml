@@ -10,3 +10,6 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+        # Deferred Close on read-only files has no actionable error.
+        - (*os.File).Close
+        - (*debug/elf.File).Close
