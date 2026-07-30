@@ -25,6 +25,7 @@ import (
 
 	"github.com/zeebo/clingy"
 
+	"github.com/loov/ixdiff/internal/disasm"
 	"github.com/loov/ixdiff/internal/fndiff"
 	"github.com/loov/ixdiff/internal/objfile"
 )
@@ -50,9 +51,15 @@ type cmdDiff struct {
 	fns    []string
 	top    int
 	sortBy string
+	maskSP bool
 
 	oldPath string
 	newPath string
+}
+
+// norm returns the normalization options selected by flags.
+func (c *cmdDiff) norm() disasm.Options {
+	return disasm.Options{MaskSP: c.maskSP}
 }
 
 // Setup declares the flags and arguments for the diff command.
@@ -62,6 +69,8 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 	c.top = params.Flag("top", "number of functions to list in ranking tables", 100,
 		clingy.Transform(strconv.Atoi)).(int)
 	c.sortBy = params.Flag("sort", "ranking order for tables: size or insts", "size").(string)
+	c.maskSP = params.Flag("mask-sp", "ignore stack-offset shifts caused by frame size changes", false,
+		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 
 	c.oldPath = params.Arg("old", "path to the baseline binary").(string)
 	c.newPath = params.Arg("new", "path to the changed binary").(string)
@@ -100,7 +109,7 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 			nonIdentical = append(nonIdentical, p)
 		}
 	}
-	analyzed, err := analyze(nonIdentical, old, new, runtime.NumCPU())
+	analyzed, err := analyze(nonIdentical, old, new, runtime.NumCPU(), c.norm())
 	if err != nil {
 		return err
 	}
@@ -126,7 +135,7 @@ func (c *cmdDiff) executeFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objf
 			}
 			continue
 		}
-		if err := writeFunc(w, matches[0], old, new); err != nil {
+		if err := writeFunc(w, matches[0], old, new, c.norm()); err != nil {
 			return err
 		}
 	}
@@ -207,7 +216,7 @@ func levenshtein(a, b string) int {
 
 // writeFunc reports one function pair: a note for identical, added,
 // and removed functions, a full assembly diff for changed ones.
-func writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary) error {
+func writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary, opts disasm.Options) error {
 	switch p.State {
 	case fndiff.StateIdentical:
 		fmt.Fprintf(w, "%s is byte-identical in both binaries\n", p.Name)
@@ -216,7 +225,7 @@ func writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary) error {
 		fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta())
 		return nil
 	}
-	analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1)
+	analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, opts)
 	if err != nil {
 		return err
 	}

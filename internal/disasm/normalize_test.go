@@ -29,7 +29,7 @@ func TestNormalize_RewritesUnstableOperands(t *testing.T) {
 		"JMP L0",                       // self-reference -> entry label
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts)
+	got := disasm.Normalize("main.f", insts, disasm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
@@ -48,9 +48,36 @@ func TestNormalize_ARM64Operands(t *testing.T) {
 		"MOVD $42, R0",
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts)
+	got := disasm.Normalize("main.f", insts, disasm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestNormalize_MaskSP(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x1000, Len: 7, Op: "SUB", Text: "SUBQ $0x330, SP"},
+		{Addr: 0x1007, Len: 8, Op: "MOV", Text: "MOVQ R11, 0x390(SP)"},
+		{Addr: 0x100f, Len: 4, Op: "MOVD", Text: "MOVD.W R30, -112(RSP)"},
+		{Addr: 0x1013, Len: 4, Op: "CMP", Text: "CMPQ SP, 0x10(R14)"},
+	}
+
+	masked := disasm.Normalize("main.f", insts, disasm.Options{MaskSP: true})
+	want := []string{
+		"SUBQ $0x330, SP",       // frame-size immediate kept
+		"MOVQ R11, <sp>(SP)",    // amd64 hex displacement masked
+		"MOVD.W R30, <sp>(RSP)", // arm64 decimal displacement masked
+		"CMPQ SP, 0x10(R14)",    // non-SP displacement kept
+	}
+	if diff := cmp.Diff(want, masked); diff != "" {
+		t.Errorf("MaskSP on mismatch (-want +got):\n%s", diff)
+	}
+
+	plain := disasm.Normalize("main.f", insts, disasm.Options{})
+	for i, in := range insts {
+		if plain[i] != in.Text {
+			t.Errorf("MaskSP off rewrote %q to %q", in.Text, plain[i])
+		}
 	}
 }
 
@@ -98,5 +125,5 @@ func normalized(t *testing.T, bin *objfile.Binary, fn *objfile.Func) []string {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	return disasm.Normalize(fn.Name, insts)
+	return disasm.Normalize(fn.Name, insts, disasm.Options{})
 }

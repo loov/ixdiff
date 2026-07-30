@@ -45,8 +45,8 @@ func Lookup(bin *objfile.Binary) SymLookup {
 //
 // Call targets are expected to be symbolized already, via a Lookup
 // passed to Decode. Plain immediates are kept untouched.
-func Normalize(name string, insts []Inst) []string {
-	n := norm{name: name, indexAt: make(map[uint64]int, len(insts))}
+func Normalize(name string, insts []Inst, opts Options) []string {
+	n := norm{name: name, opts: opts, indexAt: make(map[uint64]int, len(insts))}
 	for i, in := range insts {
 		n.indexAt[in.Addr] = i
 	}
@@ -81,9 +81,19 @@ func Normalize(name string, insts []Inst) []string {
 	return lines
 }
 
+// Options selects optional normalization rules.
+type Options struct {
+	// MaskSP masks stack-pointer displacements as <sp>(SP). A frame
+	// size change shifts every stack offset in the function; masking
+	// them keeps such a change to a single diff line at the cost of
+	// hiding genuine spill-slot changes.
+	MaskSP bool
+}
+
 // norm carries the per-function state used to normalize operands.
 type norm struct {
 	name    string
+	opts    Options
 	start   uint64
 	indexAt map[uint64]int
 }
@@ -98,12 +108,20 @@ var (
 var (
 	immArg  = regexp.MustCompile(`^\$\d+$`)
 	dispArg = regexp.MustCompile(`^-?\d+\((R\d+|RSP)\)$`)
+	// spDisp matches stack displacements: hex on amd64 (0x10(SP)),
+	// decimal on arm64 (-112(RSP)). A bare (SP) deref has no offset.
+	spDisp = regexp.MustCompile(`^-?(?:0x[0-9a-f]+|\d+)\((SP|RSP)\)$`)
 )
 
 // arg rewrites a single operand according to the Normalize rules;
 // operands it does not recognize pass through unchanged. adrp is the
 // set of registers currently holding an ADRP page address.
 func (n norm) arg(in Inst, arg string, adrp map[string]bool) string {
+	if n.opts.MaskSP {
+		if m := spDisp.FindStringSubmatch(arg); m != nil {
+			return "<sp>(" + m[1] + ")"
+		}
+	}
 	if m := dispArg.FindStringSubmatch(arg); m != nil && adrp[m[1]] {
 		return "<lo12>(" + m[1] + ")"
 	}

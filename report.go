@@ -33,7 +33,7 @@ type analysis struct {
 // concurrency. Changed pairs are additionally diffed; added and
 // removed functions contribute only their instruction counts. The
 // result keeps the input order.
-func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int) ([]*analysis, error) {
+func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts disasm.Options) ([]*analysis, error) {
 	oldLookup, newLookup := disasm.Lookup(old), disasm.Lookup(new)
 
 	results := make([]*analysis, len(pairs))
@@ -56,8 +56,8 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int) ([]*anal
 				}
 			}
 
-			oldLines := disasm.Normalize(p.Name, oldInsts)
-			newLines := disasm.Normalize(p.Name, newInsts)
+			oldLines := disasm.Normalize(p.Name, oldInsts, opts)
+			newLines := disasm.Normalize(p.Name, newInsts, opts)
 			a := &analysis{
 				pair:      p,
 				instDelta: len(newInsts) - len(oldInsts),
