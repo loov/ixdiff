@@ -42,10 +42,13 @@ func (s State) String() string {
 // Pair is one function compared across two binaries. Old is nil for
 // added functions and New is nil for removed ones.
 type Pair struct {
-	Name  string
-	State State
-	Old   *objfile.Func
-	New   *objfile.Func
+	Name string
+	// RenamedFrom is the old binary's name for this function when the
+	// pair was matched as a rename; empty otherwise.
+	RenamedFrom string
+	State       State
+	Old         *objfile.Func
+	New         *objfile.Func
 }
 
 // SizeDelta returns the change in function size in bytes.

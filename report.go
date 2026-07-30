@@ -67,8 +67,8 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 				oldOpts, newOpts := opts, opts
 				oldOpts.IsAddr, newOpts.IsAddr = old.Contains, new.Contains
 				oldLines, newLines := alignLabels(
-					disasm.NormalizeLines(p.Name, oldInsts, oldOpts),
-					disasm.NormalizeLines(p.Name, newInsts, newOpts))
+					disasm.NormalizeLines(p.Old.Name, oldInsts, oldOpts),
+					disasm.NormalizeLines(p.New.Name, newInsts, newOpts))
 				a.edits = fndiff.Diff(oldLines, newLines)
 				a.noise = slices.Equal(oldLines, newLines)
 				a.oldAddrs = addrs(oldInsts)
@@ -82,6 +82,46 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 		return nil, err
 	}
 	return results, nil
+}
+
+// bodySimilar returns the rename-detection predicate: two functions
+// from the same package with sizes within 20% whose normalized bodies
+// are at least 90% identical lines.
+func bodySimilar(old, new *objfile.Binary, opts disasm.Options) func(oldF, newF *objfile.Func) bool {
+	oldLookup, newLookup := disasm.Lookup(old), disasm.Lookup(new)
+	return func(oldF, newF *objfile.Func) bool {
+		small, large := oldF.Size, newF.Size
+		if small > large {
+			small, large = large, small
+		}
+		if small*5 < large*4 || pkgOf(oldF.Name) != pkgOf(newF.Name) {
+			return false
+		}
+
+		oldInsts, err := disasm.Decode(old.Arch, oldF.Code(), oldF.Addr, oldLookup)
+		if err != nil {
+			return false
+		}
+		newInsts, err := disasm.Decode(new.Arch, newF.Code(), newF.Addr, newLookup)
+		if err != nil {
+			return false
+		}
+		oldOpts, newOpts := opts, opts
+		oldOpts.IsAddr, newOpts.IsAddr = old.Contains, new.Contains
+		// Each side normalizes under its own symbol name so
+		// self-referencing branches become labels on both sides and a
+		// pure rename compares equal.
+		oldLines := disasm.Normalize(oldF.Name, oldInsts, oldOpts)
+		newLines := disasm.Normalize(newF.Name, newInsts, newOpts)
+
+		equal := 0
+		for _, e := range fndiff.Diff(oldLines, newLines) {
+			if e.Op == fndiff.OpEqual {
+				equal++
+			}
+		}
+		return equal*10 >= max(len(oldLines), len(newLines))*9
+	}
 }
 
 // listing builds an all-insert (added) or all-delete (removed)
@@ -98,7 +138,7 @@ func listing(p *fndiff.Pair, old, new *objfile.Binary, opts disasm.Options) (*an
 	}
 	opts.IsAddr = bin.Contains
 	a := &analysis{pair: p}
-	for _, text := range disasm.Normalize(p.Name, insts, opts) {
+	for _, text := range disasm.Normalize(fn.Name, insts, opts) {
 		a.edits = append(a.edits, fndiff.Edit{Op: op, Text: text})
 	}
 	if op == fndiff.OpInsert {
@@ -348,7 +388,11 @@ func writeTop(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, 
 		if d, ok := instDelta[p.Name]; ok {
 			insts = fmt.Sprintf("%+d", d)
 		}
-		fmt.Fprintf(w, "  %+10d %8s %-9s %s\n", p.SizeDelta(), insts, p.State, p.Name)
+		name := p.Name
+		if p.RenamedFrom != "" {
+			name += " (was " + p.RenamedFrom + ")"
+		}
+		fmt.Fprintf(w, "  %+10d %8s %-9s %s\n", p.SizeDelta(), insts, p.State, name)
 	}
 }
 
@@ -482,7 +526,7 @@ func alignOps(texts []string) []string {
 // removed function) is marked as such.
 func writeDiffHeader(w io.Writer, p *fndiff.Pair) {
 	if p.Old != nil {
-		fmt.Fprintf(w, "--- %s (%d bytes)\n", p.Name, p.Old.Size)
+		fmt.Fprintf(w, "--- %s (%d bytes)\n", p.Old.Name, p.Old.Size)
 	} else {
 		fmt.Fprintf(w, "--- %s (absent)\n", p.Name)
 	}

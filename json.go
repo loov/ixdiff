@@ -35,6 +35,7 @@ type jsonCounts struct {
 // function.
 type jsonFuncReport struct {
 	Name           string         `json:"name"`
+	RenamedFrom    string         `json:"renamed_from,omitempty"`
 	State          string         `json:"state"`
 	SizeDelta      int64          `json:"size_delta"`
 	InstDelta      *int           `json:"inst_delta,omitempty"`
@@ -108,9 +109,10 @@ func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, pairs []*fndiff.Pai
 // script for changed functions.
 func funcReport(p *fndiff.Pair, a *analysis, withDiff bool) jsonFuncReport {
 	r := jsonFuncReport{
-		Name:      p.Name,
-		State:     p.State.String(),
-		SizeDelta: p.SizeDelta(),
+		Name:        p.Name,
+		RenamedFrom: p.RenamedFrom,
+		State:       p.State.String(),
+		SizeDelta:   p.SizeDelta(),
 	}
 	if a == nil {
 		return r

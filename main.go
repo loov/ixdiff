@@ -107,6 +107,7 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	}
 
 	pairs := fndiff.Compare(old, new)
+	pairs = fndiff.MatchRenames(pairs, bodySimilar(old, new, c.norm()))
 	stdout := clingy.Stdout(ctx)
 
 	if len(c.fns) > 0 {
