@@ -1,0 +1,10 @@
+module github.com/loov/ixdiff
+
+go 1.26.4
+
+require (
+	github.com/google/go-cmp v0.7.0
+	github.com/zeebo/clingy v0.0.0-20260119143559-4d23ffb0341b
+)
+
+require github.com/zeebo/errs/v2 v2.0.3 // indirect
