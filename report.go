@@ -13,7 +13,7 @@ import (
 	"github.com/loov/ixdiff/internal/objfile"
 )
 
-// analysis is the result of disassembling and diffing one changed pair.
+// analysis is the result of disassembling one non-identical pair.
 type analysis struct {
 	pair  *fndiff.Pair
 	edits []fndiff.Edit
@@ -26,9 +26,11 @@ type analysis struct {
 	noise bool
 }
 
-// analyzeChanged disassembles and diffs every changed pair, limited to
-// NumCPU-way concurrency. The result keeps the input order.
-func analyzeChanged(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int) ([]*analysis, error) {
+// analyze disassembles every non-identical pair, limited to limit-way
+// concurrency. Changed pairs are additionally diffed; added and
+// removed functions contribute only their instruction counts. The
+// result keeps the input order.
+func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int) ([]*analysis, error) {
 	oldLookup, newLookup := disasm.Lookup(old), disasm.Lookup(new)
 
 	results := make([]*analysis, len(pairs))
@@ -36,24 +38,32 @@ func analyzeChanged(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int) (
 	g.SetLimit(limit)
 	for i, p := range pairs {
 		g.Go(func() error {
-			oldInsts, err := disasm.Decode(old.Arch, p.Old.Code(), p.Old.Addr, oldLookup)
-			if err != nil {
-				return fmt.Errorf("disassembling old %s: %w", p.Name, err)
+			var oldInsts, newInsts []disasm.Inst
+			var err error
+			if p.Old != nil {
+				oldInsts, err = disasm.Decode(old.Arch, p.Old.Code(), p.Old.Addr, oldLookup)
+				if err != nil {
+					return fmt.Errorf("disassembling old %s: %w", p.Name, err)
+				}
 			}
-			newInsts, err := disasm.Decode(new.Arch, p.New.Code(), p.New.Addr, newLookup)
-			if err != nil {
-				return fmt.Errorf("disassembling new %s: %w", p.Name, err)
+			if p.New != nil {
+				newInsts, err = disasm.Decode(new.Arch, p.New.Code(), p.New.Addr, newLookup)
+				if err != nil {
+					return fmt.Errorf("disassembling new %s: %w", p.Name, err)
+				}
 			}
 
 			oldLines := disasm.Normalize(p.Name, oldInsts)
 			newLines := disasm.Normalize(p.Name, newInsts)
 			a := &analysis{
 				pair:      p,
-				edits:     fndiff.Diff(oldLines, newLines),
 				instDelta: len(newInsts) - len(oldInsts),
 				opDelta:   fndiff.CountOps(ops(oldInsts)).Delta(fndiff.CountOps(ops(newInsts))),
 			}
-			a.noise = slices.Equal(oldLines, newLines)
+			if p.State == fndiff.StateChanged {
+				a.edits = fndiff.Diff(oldLines, newLines)
+				a.noise = slices.Equal(oldLines, newLines)
+			}
 			results[i] = a
 			return nil
 		})
@@ -75,7 +85,7 @@ func ops(insts []disasm.Inst) []string {
 
 // writeSummary prints the overall comparison: pair counts, total size
 // delta, the aggregated opcode delta, and the top-N changed functions.
-func writeSummary(w io.Writer, pairs []*fndiff.Pair, changed []*analysis, top int, sortBy string) {
+func writeSummary(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, sortBy string) {
 	counts := map[fndiff.State]int{}
 	var sizeDelta int64
 	for _, p := range pairs {
@@ -84,7 +94,7 @@ func writeSummary(w io.Writer, pairs []*fndiff.Pair, changed []*analysis, top in
 	}
 	noise := 0
 	totalOps := fndiff.OpCount{}
-	for _, a := range changed {
+	for _, a := range analyzed {
 		if a.noise {
 			noise++
 			continue
@@ -104,7 +114,7 @@ func writeSummary(w io.Writer, pairs []*fndiff.Pair, changed []*analysis, top in
 		}
 	}
 
-	writeTop(w, pairs, changed, top, sortBy)
+	writeTop(w, pairs, analyzed, top, sortBy)
 }
 
 // sortedOps orders mnemonics by descending |delta|, then name.
@@ -124,9 +134,9 @@ func sortedOps(counts fndiff.OpCount) []string {
 
 // writeTop prints the top-N functions ranked by absolute size or
 // instruction-count delta.
-func writeTop(w io.Writer, pairs []*fndiff.Pair, changed []*analysis, top int, sortBy string) {
+func writeTop(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, sortBy string) {
 	instDelta := map[string]int{}
-	for _, a := range changed {
+	for _, a := range analyzed {
 		if !a.noise {
 			instDelta[a.pair.Name] = a.instDelta
 		}

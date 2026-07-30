@@ -92,17 +92,17 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		return c.executeFuncs(stdout, pairs, old, new)
 	}
 
-	var changedPairs []*fndiff.Pair
+	var nonIdentical []*fndiff.Pair
 	for _, p := range pairs {
-		if p.State == fndiff.StateChanged {
-			changedPairs = append(changedPairs, p)
+		if p.State != fndiff.StateIdentical {
+			nonIdentical = append(nonIdentical, p)
 		}
 	}
-	changed, err := analyzeChanged(changedPairs, old, new, runtime.NumCPU())
+	analyzed, err := analyze(nonIdentical, old, new, runtime.NumCPU())
 	if err != nil {
 		return err
 	}
-	writeSummary(stdout, pairs, changed, c.top, c.sortBy)
+	writeSummary(stdout, pairs, analyzed, c.top, c.sortBy)
 	return nil
 }
 
@@ -135,10 +135,10 @@ func writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary) error {
 		fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta())
 		return nil
 	}
-	changed, err := analyzeChanged([]*fndiff.Pair{p}, old, new, 1)
+	analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1)
 	if err != nil {
 		return err
 	}
-	writeFuncDiff(w, changed[0])
+	writeFuncDiff(w, analyzed[0])
 	return nil
 }

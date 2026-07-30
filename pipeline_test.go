@@ -45,6 +45,12 @@ func TestPipeline_InliningComparison(t *testing.T) {
 	if !strings.Contains(out, "main.sum") {
 		t.Errorf("expected main.sum among changed functions:\n%s", out)
 	}
+
+	// Added and removed functions are disassembled too, so every
+	// ranked row has a numeric instruction delta.
+	if table := out[strings.Index(out, "top "):]; strings.Contains(table, " - ") {
+		t.Errorf("ranking table still has '-' instruction deltas:\n%s", table)
+	}
 }
 
 func TestPipeline_SelfComparisonIsQuiet(t *testing.T) {
