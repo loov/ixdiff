@@ -16,6 +16,9 @@ from the pclntab even when stripped.
 go install github.com/loov/ixdiff@latest
 ```
 
+Prebuilt binaries for linux, macOS, and Windows are attached to
+[releases](https://github.com/loov/ixdiff/releases).
+
 ## Usage
 
 Summary of everything that changed:

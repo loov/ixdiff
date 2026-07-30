@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,6 +33,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(version())
+		return
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -45,6 +51,22 @@ func main() {
 	if !ok || err != nil {
 		os.Exit(1)
 	}
+}
+
+// version reports the module version and VCS revision recorded in the
+// build info.
+func version() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	v := info.Main.Version
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && len(s.Value) >= 12 {
+			v += " (" + s.Value[:12] + ")"
+		}
+	}
+	return v
 }
 
 // cmdDiff compares two binaries and reports their assembly differences.
