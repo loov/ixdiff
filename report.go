@@ -43,6 +43,14 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 	g.SetLimit(limit)
 	for i, p := range pairs {
 		g.Go(func() error {
+			if p.State == fndiff.StateChanged &&
+				disasm.RelocOnly(old.Arch, p.Old.Code(), p.New.Code(),
+					p.Old.Addr, p.New.Addr, oldLookup, newLookup) {
+				// Provably relocation-only: skip disassembly.
+				results[i] = &analysis{pair: p, noise: true}
+				return nil
+			}
+
 			var oldInsts, newInsts []disasm.Inst
 			var err error
 			if p.Old != nil {
