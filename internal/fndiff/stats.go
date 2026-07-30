@@ -36,6 +36,16 @@ func (c OpCount) Add(other OpCount) {
 	}
 }
 
+// Compact removes zero entries, which appear when accumulated deltas
+// cancel out.
+func (c OpCount) Compact() {
+	for op, n := range c {
+		if n == 0 {
+			delete(c, op)
+		}
+	}
+}
+
 // Total returns the sum of all counts.
 func (c OpCount) Total() int {
 	total := 0

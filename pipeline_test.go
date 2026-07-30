@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"testing"
@@ -102,6 +103,51 @@ func TestPipeline_MissingFunctionErrors(t *testing.T) {
 	}.Run(context.Background(), nil)
 	if err == nil {
 		t.Error("expected error for unknown function")
+	}
+}
+
+func TestPipeline_JSONOutput(t *testing.T) {
+	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
+	noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", GCFlags: "-l"})
+
+	var summary struct {
+		Arch   string `json:"arch"`
+		Counts struct {
+			Identical int `json:"identical"`
+			Changed   int `json:"changed"`
+		} `json:"counts"`
+		SizeDelta int64          `json:"size_delta"`
+		OpDelta   map[string]int `json:"op_delta"`
+		Functions []struct {
+			Name      string `json:"name"`
+			State     string `json:"state"`
+			SizeDelta int64  `json:"size_delta"`
+			InstDelta *int   `json:"inst_delta"`
+		} `json:"functions"`
+	}
+	if err := json.Unmarshal([]byte(run(t, "--json", base, noinline)), &summary); err != nil {
+		t.Fatalf("summary is not valid JSON: %v", err)
+	}
+	if summary.Arch != "amd64" || summary.Counts.Identical == 0 || summary.Counts.Changed == 0 {
+		t.Errorf("implausible summary: %+v", summary)
+	}
+	if len(summary.Functions) == 0 || summary.Functions[0].InstDelta == nil {
+		t.Errorf("ranked functions missing inst_delta: %+v", summary.Functions)
+	}
+
+	var funcs []struct {
+		Name  string `json:"name"`
+		State string `json:"state"`
+		Diff  []struct {
+			Op   string `json:"op"`
+			Text string `json:"text"`
+		} `json:"diff"`
+	}
+	if err := json.Unmarshal([]byte(run(t, "--json", "--fn", "main.main", base, noinline)), &funcs); err != nil {
+		t.Fatalf("--fn output is not valid JSON: %v", err)
+	}
+	if len(funcs) != 1 || funcs[0].State != "changed" || len(funcs[0].Diff) == 0 {
+		t.Errorf("expected one changed function with a diff: %+v", funcs)
 	}
 }
 

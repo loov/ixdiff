@@ -117,6 +117,7 @@ func writeSummary(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top i
 		}
 		totalOps.Add(a.opDelta)
 	}
+	totalOps.Compact()
 
 	fmt.Fprintf(w, "functions: %d identical, %d changed (+%d relocations), %d added, %d removed\n",
 		counts[fndiff.StateIdentical], counts[fndiff.StateChanged]-noise, noise,
@@ -148,16 +149,22 @@ func sortedOps(counts fndiff.OpCount) []string {
 	return ops
 }
 
-// writeTop prints the top-N functions ranked by absolute size or
-// instruction-count delta.
-func writeTop(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, sortBy string) {
-	instDelta := map[string]int{}
+// instDeltas collects the instruction-count delta of every analyzed
+// function that is not relocation-only noise.
+func instDeltas(analyzed []*analysis) map[string]int {
+	deltas := map[string]int{}
 	for _, a := range analyzed {
 		if !a.noise {
-			instDelta[a.pair.Name] = a.instDelta
+			deltas[a.pair.Name] = a.instDelta
 		}
 	}
+	return deltas
+}
 
+// rankPairs returns the top non-identical functions ordered by
+// absolute size or instruction-count delta, zero-delta entries
+// omitted.
+func rankPairs(pairs []*fndiff.Pair, instDelta map[string]int, top int, sortBy string) []*fndiff.Pair {
 	ranked := make([]*fndiff.Pair, 0, len(pairs))
 	for _, p := range pairs {
 		if p.State == fndiff.StateIdentical {
@@ -190,6 +197,14 @@ func writeTop(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, 
 	if len(ranked) > top {
 		ranked = ranked[:top]
 	}
+	return ranked
+}
+
+// writeTop prints the top-N functions ranked by absolute size or
+// instruction-count delta.
+func writeTop(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, sortBy string) {
+	instDelta := instDeltas(analyzed)
+	ranked := rankPairs(pairs, instDelta, top, sortBy)
 	if len(ranked) == 0 {
 		return
 	}

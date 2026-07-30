@@ -52,6 +52,7 @@ type cmdDiff struct {
 	top    int
 	sortBy string
 	maskSP bool
+	json   bool
 
 	oldPath string
 	newPath string
@@ -70,6 +71,8 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 		clingy.Transform(strconv.Atoi)).(int)
 	c.sortBy = params.Flag("sort", "ranking order for tables: size or insts", "size").(string)
 	c.maskSP = params.Flag("mask-sp", "ignore stack-offset shifts caused by frame size changes", false,
+		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
+	c.json = params.Flag("json", "emit machine-readable JSON instead of text", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 
 	c.oldPath = params.Arg("old", "path to the baseline binary").(string)
@@ -113,6 +116,9 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if c.json {
+		return c.writeJSONSummary(stdout, old.Arch.String(), pairs, analyzed)
+	}
 	writeSummary(stdout, pairs, analyzed, c.top, c.sortBy)
 	return nil
 }
@@ -120,6 +126,9 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 // executeFuncs reports the assembly diff of every function named by a
 // --fn flag, in the order given, separated by blank lines.
 func (c *cmdDiff) executeFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objfile.Binary) error {
+	if c.json {
+		return c.writeJSONFuncs(w, pairs, old, new)
+	}
 	for i, name := range c.fns {
 		if i > 0 {
 			fmt.Fprintln(w)
@@ -140,6 +149,32 @@ func (c *cmdDiff) executeFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objf
 		}
 	}
 	return nil
+}
+
+// writeJSONFuncs emits the --fn reports as one JSON array. A uniquely
+// matched changed function includes its full diff; ambiguous matches
+// are listed without one, mirroring the text output.
+func (c *cmdDiff) writeJSONFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objfile.Binary) error {
+	var reports []jsonFuncReport
+	for _, name := range c.fns {
+		matches, err := matchFuncs(pairs, name)
+		if err != nil {
+			return err
+		}
+		withDiff := len(matches) == 1
+		for _, p := range matches {
+			var a *analysis
+			if p.State == fndiff.StateChanged {
+				analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, c.norm())
+				if err != nil {
+					return err
+				}
+				a = analyzed[0]
+			}
+			reports = append(reports, funcReport(p, a, withDiff))
+		}
+	}
+	return encodeJSON(w, reports)
 }
 
 // matchFuncs resolves a --fn value: an exact name wins, otherwise all
