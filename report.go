@@ -17,6 +17,9 @@ import (
 type analysis struct {
 	pair  *fndiff.Pair
 	edits []fndiff.Edit
+	// oldAddrs and newAddrs are the instruction addresses backing the
+	// two sides of edits.
+	oldAddrs, newAddrs []uint64
 	// instDelta is new minus old instruction count.
 	instDelta int
 	// opDelta is the per-mnemonic count change.
@@ -63,6 +66,8 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int) ([]*anal
 			if p.State == fndiff.StateChanged {
 				a.edits = fndiff.Diff(oldLines, newLines)
 				a.noise = slices.Equal(oldLines, newLines)
+				a.oldAddrs = addrs(oldInsts)
+				a.newAddrs = addrs(newInsts)
 			}
 			results[i] = a
 			return nil
@@ -72,6 +77,15 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int) ([]*anal
 		return nil, err
 	}
 	return results, nil
+}
+
+// addrs extracts the addresses of insts.
+func addrs(insts []disasm.Inst) []uint64 {
+	out := make([]uint64, len(insts))
+	for i, in := range insts {
+		out[i] = in.Addr
+	}
+	return out
 }
 
 // ops extracts the mnemonics of insts.
@@ -189,7 +203,88 @@ func writeTop(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, 
 	}
 }
 
-// writeFuncDiff prints a unified-style diff of one function.
+// diffLine is one rendered diff row: an edit with the addresses of
+// the instructions it came from, so every line can be cross-referenced
+// with objdump or a profiler. oldAddr is zero for inserts and newAddr
+// is zero for deletes.
+type diffLine struct {
+	op               fndiff.Op
+	oldAddr, newAddr uint64
+	text             string
+}
+
+// addr returns the address to display: the old-side one when present.
+func (l diffLine) addr() uint64 {
+	if l.op == fndiff.OpInsert {
+		return l.newAddr
+	}
+	return l.oldAddr
+}
+
+// diffLines resolves the addresses of each edit by walking the edit
+// script with one cursor per side.
+func diffLines(a *analysis) []diffLine {
+	lines := make([]diffLine, len(a.edits))
+	oi, ni := 0, 0
+	for i, e := range a.edits {
+		switch e.Op {
+		case fndiff.OpDelete:
+			lines[i] = diffLine{e.Op, a.oldAddrs[oi], 0, e.Text}
+			oi++
+		case fndiff.OpInsert:
+			lines[i] = diffLine{e.Op, 0, a.newAddrs[ni], e.Text}
+			ni++
+		default:
+			lines[i] = diffLine{e.Op, a.oldAddrs[oi], a.newAddrs[ni], e.Text}
+			oi, ni = oi+1, ni+1
+		}
+	}
+	return lines
+}
+
+// hunkContext is how many unchanged lines are kept around each change.
+const hunkContext = 3
+
+// hunks splits lines into groups of changes with hunkContext equal
+// lines of context, eliding longer equal runs.
+func hunks(lines []diffLine) [][]diffLine {
+	var out [][]diffLine
+	var cur []diffLine
+	// pending buffers the equal run since the last change.
+	var pending []diffLine
+	for _, l := range lines {
+		if l.op == fndiff.OpEqual {
+			pending = append(pending, l)
+			continue
+		}
+		switch {
+		case cur == nil:
+			// Start a hunk with trailing context only.
+			if len(pending) > hunkContext {
+				pending = pending[len(pending)-hunkContext:]
+			}
+		case len(pending) > 2*hunkContext:
+			// The equal run is long enough to split hunks.
+			cur = append(cur, pending[:hunkContext]...)
+			out = append(out, cur)
+			cur = nil
+			pending = pending[len(pending)-hunkContext:]
+		}
+		cur = append(cur, pending...)
+		pending = nil
+		cur = append(cur, l)
+	}
+	if cur != nil {
+		if len(pending) > hunkContext {
+			pending = pending[:hunkContext]
+		}
+		out = append(out, append(cur, pending...))
+	}
+	return out
+}
+
+// writeFuncDiff prints a unified-style diff of one function, grouped
+// into hunks with an address column.
 func writeFuncDiff(w io.Writer, a *analysis) {
 	p := a.pair
 	fmt.Fprintf(w, "--- %s (%d bytes)\n", p.Name, p.Old.Size)
@@ -198,16 +293,27 @@ func writeFuncDiff(w io.Writer, a *analysis) {
 		fmt.Fprintf(w, "bytes differ only by relocation; normalized assembly is identical\n")
 		return
 	}
-	for _, e := range a.edits {
-		switch e.Op {
-		case fndiff.OpDelete:
-			fmt.Fprintf(w, "-%s\n", e.Text)
-		case fndiff.OpInsert:
-			fmt.Fprintf(w, "+%s\n", e.Text)
-		default:
-			fmt.Fprintf(w, " %s\n", e.Text)
+	for _, hunk := range hunks(diffLines(a)) {
+		fmt.Fprintf(w, "@@ %s @@\n", hunkRange(hunk))
+		for _, l := range hunk {
+			fmt.Fprintf(w, "%c%x: %s\n", " -+"[l.op], l.addr(), l.text)
 		}
 	}
+}
+
+// hunkRange describes a hunk by the first old- and new-side addresses
+// it covers.
+func hunkRange(hunk []diffLine) string {
+	var oldAddr, newAddr uint64
+	for _, l := range hunk {
+		if oldAddr == 0 && l.oldAddr != 0 {
+			oldAddr = l.oldAddr
+		}
+		if newAddr == 0 && l.newAddr != 0 {
+			newAddr = l.newAddr
+		}
+	}
+	return fmt.Sprintf("-%x +%x", oldAddr, newAddr)
 }
 
 func abs(v int) int {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -72,9 +73,13 @@ func TestPipeline_SingleFunctionDiff(t *testing.T) {
 	if !strings.Contains(out, "--- main.main") || !strings.Contains(out, "+++ main.main") {
 		t.Errorf("missing diff header:\n%s", out)
 	}
-	// Outlined calls must appear as inserted CALL lines.
-	if !strings.Contains(out, "+CALL main.sum(SB)") {
-		t.Errorf("expected inserted CALL main.sum:\n%s", out)
+	if !strings.Contains(out, "@@ -") {
+		t.Errorf("missing hunk headers:\n%s", out)
+	}
+	// Outlined calls must appear as inserted CALL lines with an
+	// address column.
+	if !regexp.MustCompile(`(?m)^\+[0-9a-f]+: CALL main\.sum\(SB\)$`).MatchString(out) {
+		t.Errorf("expected inserted CALL main.sum with address:\n%s", out)
 	}
 
 	// Repeated --fn reports each function in the order given.
