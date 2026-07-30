@@ -364,6 +364,112 @@ func hunkRange(hunk []diffLine) string {
 	return fmt.Sprintf("-%x +%x", oldAddr, newAddr)
 }
 
+// sideRow pairs an old-side and new-side line for two-column output.
+// Either side may be nil when the row has no counterpart.
+type sideRow struct {
+	old, new *diffLine
+}
+
+// sideRows pairs the lines of a hunk: equal lines share a row, and a
+// run of deletions zips with the following run of insertions so
+// replaced instructions sit next to each other.
+func sideRows(hunk []diffLine) []sideRow {
+	var rows []sideRow
+	for i := 0; i < len(hunk); {
+		if hunk[i].op == fndiff.OpEqual {
+			rows = append(rows, sideRow{&hunk[i], &hunk[i]})
+			i++
+			continue
+		}
+		var dels, inss []*diffLine
+		for ; i < len(hunk) && hunk[i].op == fndiff.OpDelete; i++ {
+			dels = append(dels, &hunk[i])
+		}
+		for ; i < len(hunk) && hunk[i].op == fndiff.OpInsert; i++ {
+			inss = append(inss, &hunk[i])
+		}
+		for j := range max(len(dels), len(inss)) {
+			var row sideRow
+			if j < len(dels) {
+				row.old = dels[j]
+			}
+			if j < len(inss) {
+				row.new = inss[j]
+			}
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+// sideColumnWidth caps each column so two columns fit a wide terminal.
+const sideColumnWidth = 60
+
+// writeFuncDiffSide prints the diff of one function as two columns,
+// old on the left and new on the right, with a marker column between:
+// space for unchanged rows, < for deletions, > for insertions, and |
+// for replacements.
+func writeFuncDiffSide(w io.Writer, a *analysis) {
+	p := a.pair
+	fmt.Fprintf(w, "--- %s (%d bytes)\n", p.Name, p.Old.Size)
+	fmt.Fprintf(w, "+++ %s (%d bytes)\n", p.Name, p.New.Size)
+	if a.noise {
+		fmt.Fprintf(w, "bytes differ only by relocation; normalized assembly is identical\n")
+		return
+	}
+	for _, hunk := range hunks(diffLines(a)) {
+		fmt.Fprintf(w, "@@ %s @@\n", hunkRange(hunk))
+
+		texts := make([]string, len(hunk))
+		for i, l := range hunk {
+			texts[i] = l.text
+		}
+		aligned := alignOps(texts)
+		alignedOf := make(map[*diffLine]string, len(hunk))
+		for i := range hunk {
+			alignedOf[&hunk[i]] = aligned[i]
+		}
+		// cell renders one side of a row with that side's address.
+		cell := func(l *diffLine, addr uint64) string {
+			if l == nil {
+				return ""
+			}
+			s := fmt.Sprintf("%x: %s", addr, alignedOf[l])
+			if len(s) > sideColumnWidth {
+				s = s[:sideColumnWidth-3] + "..."
+			}
+			return s
+		}
+
+		rows := sideRows(hunk)
+		width := 0
+		for _, row := range rows {
+			if row.old != nil {
+				width = max(width, len(cell(row.old, row.old.oldAddr)))
+			}
+		}
+		for _, row := range rows {
+			var left, right string
+			marker := ' '
+			if row.old != nil {
+				left = cell(row.old, row.old.oldAddr)
+			}
+			if row.new != nil {
+				right = cell(row.new, row.new.newAddr)
+			}
+			switch {
+			case row.old != nil && row.old.op == fndiff.OpDelete && row.new != nil:
+				marker = '|'
+			case row.old != nil && row.old.op == fndiff.OpDelete:
+				marker = '<'
+			case row.new != nil && row.new.op == fndiff.OpInsert:
+				marker = '>'
+			}
+			fmt.Fprintf(w, "%-*s %c %s\n", width, left, marker, right)
+		}
+	}
+}
+
 func abs(v int) int {
 	if v < 0 {
 		return -v

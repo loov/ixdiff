@@ -83,6 +83,12 @@ func TestPipeline_SingleFunctionDiff(t *testing.T) {
 		t.Errorf("expected inserted CALL main.sum with address:\n%s", out)
 	}
 
+	// Side-by-side output pairs the inserted call into a marked row.
+	out = run(t, "--side-by-side", "--fn", "main.main", base, noinline)
+	if !regexp.MustCompile(`(?m)[|>] [0-9a-f]+: CALL\s+main\.sum\(SB\)$`).MatchString(out) {
+		t.Errorf("expected marked side-by-side row for CALL main.sum:\n%s", out)
+	}
+
 	// Repeated --fn reports each function in the order given.
 	out = run(t, "--fn", "main.main", "--fn", "main.sum", base, noinline)
 	main, sum := strings.Index(out, "--- main.main"), strings.Index(out, "main.sum is")

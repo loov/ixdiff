@@ -53,6 +53,7 @@ type cmdDiff struct {
 	sortBy string
 	maskSP bool
 	json   bool
+	sideBy bool
 
 	oldPath string
 	newPath string
@@ -73,6 +74,8 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 	c.maskSP = params.Flag("mask-sp", "ignore stack-offset shifts caused by frame size changes", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 	c.json = params.Flag("json", "emit machine-readable JSON instead of text", false,
+		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
+	c.sideBy = params.Flag("side-by-side", "show function diffs as two columns", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 
 	c.oldPath = params.Arg("old", "path to the baseline binary").(string)
@@ -144,7 +147,7 @@ func (c *cmdDiff) executeFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objf
 			}
 			continue
 		}
-		if err := writeFunc(w, matches[0], old, new, c.norm()); err != nil {
+		if err := c.writeFunc(w, matches[0], old, new); err != nil {
 			return err
 		}
 	}
@@ -251,7 +254,7 @@ func levenshtein(a, b string) int {
 
 // writeFunc reports one function pair: a note for identical, added,
 // and removed functions, a full assembly diff for changed ones.
-func writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary, opts disasm.Options) error {
+func (c *cmdDiff) writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary) error {
 	switch p.State {
 	case fndiff.StateIdentical:
 		fmt.Fprintf(w, "%s is byte-identical in both binaries\n", p.Name)
@@ -260,10 +263,14 @@ func writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary, opts disas
 		fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta())
 		return nil
 	}
-	analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, opts)
+	analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, c.norm())
 	if err != nil {
 		return err
 	}
-	writeFuncDiff(w, analyzed[0])
+	if c.sideBy {
+		writeFuncDiffSide(w, analyzed[0])
+	} else {
+		writeFuncDiff(w, analyzed[0])
+	}
 	return nil
 }

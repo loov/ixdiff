@@ -124,6 +124,27 @@ func TestAlignOps_PadsMnemonicsToCommonColumn(t *testing.T) {
 	}
 }
 
+func TestSideRows_PairsReplacements(t *testing.T) {
+	a := mkAnalysis(
+		[]string{"same", "del1", "del2", "tail"},
+		[]string{"same", "ins1", "tail"},
+	)
+	rows := sideRows(diffLines(a))
+	if len(rows) != 4 {
+		t.Fatalf("got %d rows, want 4", len(rows))
+	}
+	if rows[0].old == nil || rows[0].new == nil || rows[0].old.text != "same" {
+		t.Errorf("row 0 should pair the equal line, got %+v", rows[0])
+	}
+	if rows[1].old == nil || rows[1].new == nil ||
+		rows[1].old.text != "del1" || rows[1].new.text != "ins1" {
+		t.Errorf("row 1 should pair del1 with ins1, got %+v", rows[1])
+	}
+	if rows[2].old == nil || rows[2].new != nil || rows[2].old.text != "del2" {
+		t.Errorf("row 2 should be delete-only, got %+v", rows[2])
+	}
+}
+
 func TestHunks_ShortEqualRunStaysInOneHunk(t *testing.T) {
 	olds := []string{"a", "m", "n", "z"}
 	news := []string{"A", "m", "n", "Z"}
