@@ -60,7 +60,7 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 
 			a := &analysis{
 				pair:      p,
-				instDelta: len(newInsts) - len(oldInsts),
+				instDelta: countInsts(newInsts) - countInsts(oldInsts),
 				opDelta:   fndiff.CountOps(ops(oldInsts)).Delta(fndiff.CountOps(ops(newInsts))),
 			}
 			if p.State == fndiff.StateChanged {
@@ -169,13 +169,27 @@ func addrs(insts []disasm.Inst) []uint64 {
 	return out
 }
 
-// ops extracts the mnemonics of insts.
+// ops extracts the mnemonics of insts, skipping BYTE pseudo-
+// instructions: padding is not code and would pollute the statistics.
 func ops(insts []disasm.Inst) []string {
-	out := make([]string, len(insts))
-	for i, in := range insts {
-		out[i] = in.Op
+	out := make([]string, 0, len(insts))
+	for _, in := range insts {
+		if in.Op != "BYTE" {
+			out = append(out, in.Op)
+		}
 	}
 	return out
+}
+
+// countInsts counts real instructions, excluding BYTE padding.
+func countInsts(insts []disasm.Inst) int {
+	n := 0
+	for _, in := range insts {
+		if in.Op != "BYTE" {
+			n++
+		}
+	}
+	return n
 }
 
 // writeSummary prints the overall comparison: pair counts, total size

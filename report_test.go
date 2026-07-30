@@ -161,6 +161,18 @@ func TestHunks_SplitsOnLongEqualRuns(t *testing.T) {
 	}
 }
 
+func TestOps_ExcludesBytePadding(t *testing.T) {
+	insts := []disasm.Inst{
+		{Op: "MOV"}, {Op: "RET"}, {Op: "BYTE"}, {Op: "BYTE"},
+	}
+	if got := ops(insts); len(got) != 2 {
+		t.Errorf("ops = %v, want BYTE excluded", got)
+	}
+	if got := countInsts(insts); got != 2 {
+		t.Errorf("countInsts = %d, want 2", got)
+	}
+}
+
 func TestAlignOps_PadsMnemonicsToCommonColumn(t *testing.T) {
 	got := alignOps([]string{
 		"MOVQ R11, 0x390(SP)",
