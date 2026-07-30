@@ -79,7 +79,7 @@ func TestPipeline_SingleFunctionDiff(t *testing.T) {
 	}
 	// Outlined calls must appear as inserted CALL lines with an
 	// address column.
-	if !regexp.MustCompile(`(?m)^\+[0-9a-f]+: CALL main\.sum\(SB\)$`).MatchString(out) {
+	if !regexp.MustCompile(`(?m)^\+[0-9a-f]+: CALL\s+main\.sum\(SB\)$`).MatchString(out) {
 		t.Errorf("expected inserted CALL main.sum with address:\n%s", out)
 	}
 

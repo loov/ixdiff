@@ -106,6 +106,24 @@ func TestHunks_SplitsOnLongEqualRuns(t *testing.T) {
 	}
 }
 
+func TestAlignOps_PadsMnemonicsToCommonColumn(t *testing.T) {
+	got := alignOps([]string{
+		"MOVQ R11, 0x390(SP)",
+		"CALL runtime.makeslice(SB)",
+		"MOVUPS X15, 0(AX)",
+		"RET",
+	})
+	want := []string{
+		"MOVQ   R11, 0x390(SP)",
+		"CALL   runtime.makeslice(SB)",
+		"MOVUPS X15, 0(AX)",
+		"RET",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("alignOps mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestHunks_ShortEqualRunStaysInOneHunk(t *testing.T) {
 	olds := []string{"a", "m", "n", "z"}
 	news := []string{"A", "m", "n", "Z"}

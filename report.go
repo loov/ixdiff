@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"golang.org/x/sync/errgroup"
 
@@ -312,10 +313,40 @@ func writeFuncDiff(w io.Writer, a *analysis) {
 	}
 	for _, hunk := range hunks(diffLines(a)) {
 		fmt.Fprintf(w, "@@ %s @@\n", hunkRange(hunk))
-		for _, l := range hunk {
-			fmt.Fprintf(w, "%c%x: %s\n", " -+"[l.op], l.addr(), l.text)
+		texts := make([]string, len(hunk))
+		for i, l := range hunk {
+			texts[i] = l.text
+		}
+		for i, text := range alignOps(texts) {
+			fmt.Fprintf(w, "%c%x: %s\n", " -+"[hunk[i].op], hunk[i].addr(), text)
 		}
 	}
+}
+
+// maxOpWidth caps the mnemonic column so one unusually long mnemonic
+// does not push every operand far right.
+const maxOpWidth = 8
+
+// alignOps pads mnemonics to a common column so operands line up,
+// objdump-style. The column is the longest mnemonic in the group,
+// capped at maxOpWidth.
+func alignOps(texts []string) []string {
+	width := 0
+	for _, text := range texts {
+		if op, _, ok := strings.Cut(text, " "); ok {
+			width = max(width, min(len(op), maxOpWidth))
+		}
+	}
+	out := make([]string, len(texts))
+	for i, text := range texts {
+		op, args, ok := strings.Cut(text, " ")
+		if !ok || len(op) >= width {
+			out[i] = text
+			continue
+		}
+		out[i] = op + strings.Repeat(" ", width-len(op)+1) + args
+	}
+	return out
 }
 
 // hunkRange describes a hunk by the first old- and new-side addresses
