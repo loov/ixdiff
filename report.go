@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -57,16 +58,17 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 				}
 			}
 
-			oldOpts, newOpts := opts, opts
-			oldOpts.IsAddr, newOpts.IsAddr = old.Contains, new.Contains
-			oldLines := disasm.Normalize(p.Name, oldInsts, oldOpts)
-			newLines := disasm.Normalize(p.Name, newInsts, newOpts)
 			a := &analysis{
 				pair:      p,
 				instDelta: len(newInsts) - len(oldInsts),
 				opDelta:   fndiff.CountOps(ops(oldInsts)).Delta(fndiff.CountOps(ops(newInsts))),
 			}
 			if p.State == fndiff.StateChanged {
+				oldOpts, newOpts := opts, opts
+				oldOpts.IsAddr, newOpts.IsAddr = old.Contains, new.Contains
+				oldLines, newLines := alignLabels(
+					disasm.NormalizeLines(p.Name, oldInsts, oldOpts),
+					disasm.NormalizeLines(p.Name, newInsts, newOpts))
 				a.edits = fndiff.Diff(oldLines, newLines)
 				a.noise = slices.Equal(oldLines, newLines)
 				a.oldAddrs = addrs(oldInsts)
@@ -80,6 +82,82 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 		return nil, err
 	}
 	return results, nil
+}
+
+// alignLabels renders both sides of a changed function with branch
+// labels derived from an instruction alignment, so that a branch whose
+// target is structurally unchanged gets the same label on both sides
+// no matter how many instructions were inserted or removed elsewhere.
+//
+// It first aligns the two sides with all labels masked, then names
+// aligned target pairs identically (numbered in new-side order) and
+// falls back to fresh per-side numbers for targets that do not align —
+// those branches genuinely changed and should diff.
+func alignLabels(old, new []disasm.Line) (oldLines, newLines []string) {
+	masked := func(int) string { return "L?" }
+	align := fndiff.Diff(disasm.Render(old, masked), disasm.Render(new, masked))
+
+	// oldToNew maps aligned instruction indices via the equal lines.
+	oldToNew := make(map[int]int)
+	oi, ni := 0, 0
+	for _, e := range align {
+		switch e.Op {
+		case fndiff.OpDelete:
+			oi++
+		case fndiff.OpInsert:
+			ni++
+		default:
+			oldToNew[oi] = ni
+			oi, ni = oi+1, ni+1
+		}
+	}
+
+	// New-side targets are numbered in address order; old-side targets
+	// inherit the number of the new target they align to, and the rest
+	// continue the numbering in old order.
+	newNumber := targetNumbers(new, 0)
+	next := len(newNumber)
+	oldNumber := make(map[int]int)
+	for _, t := range sortedTargets(old) {
+		if nt, ok := oldToNew[t]; ok {
+			if num, ok := newNumber[nt]; ok {
+				oldNumber[t] = num
+				continue
+			}
+		}
+		next++
+		oldNumber[t] = next
+	}
+
+	label := func(number map[int]int) func(int) string {
+		return func(target int) string { return "L" + strconv.Itoa(number[target]) }
+	}
+	return disasm.Render(old, label(oldNumber)), disasm.Render(new, label(newNumber))
+}
+
+// sortedTargets returns the distinct branch targets of lines in
+// address order.
+func sortedTargets(lines []disasm.Line) []int {
+	seen := map[int]bool{}
+	var targets []int
+	for _, l := range lines {
+		if l.Target >= 0 && !seen[l.Target] {
+			seen[l.Target] = true
+			targets = append(targets, l.Target)
+		}
+	}
+	slices.Sort(targets)
+	return targets
+}
+
+// targetNumbers numbers the distinct targets of lines starting at
+// base+1.
+func targetNumbers(lines []disasm.Line, base int) map[int]int {
+	number := make(map[int]int)
+	for i, t := range sortedTargets(lines) {
+		number[t] = base + i + 1
+	}
+	return number
 }
 
 // addrs extracts the addresses of insts.
