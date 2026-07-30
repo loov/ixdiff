@@ -53,14 +53,19 @@ func dataMasked(name string, size uint64) bool {
 // references, so a call or load retargeted to a different symbol is
 // never mistaken for relocation.
 //
-// Only arm64 is recognized: fixed-width words make the relocation
-// fields cheap to locate. On amd64 it always returns false.
 func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint64,
 	oldSym, newSym SymLookup, oldData, newData DataLookup) bool {
-	if arch != objfile.ArchARM64 || len(oldCode) != len(newCode) {
+	if len(oldCode) != len(newCode) {
 		return false
 	}
-	return relocOnlyARM64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
+	switch arch {
+	case objfile.ArchARM64:
+		return relocOnlyARM64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
+	case objfile.ArchAMD64:
+		return relocOnlyAMD64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
+	default:
+		return false
+	}
 }
 
 // arm64 instruction encodings, per the ARM ARM. Register numbers

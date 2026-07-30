@@ -1,6 +1,7 @@
 package disasm_test
 
 import (
+	"bytes"
 	"encoding/binary"
 	"testing"
 
@@ -155,11 +156,82 @@ func TestRelocOnly_ARM64(t *testing.T) {
 	}
 }
 
-func TestRelocOnly_AMD64AlwaysFalse(t *testing.T) {
-	code := []byte{0xc3}
-	noSym := func(uint64) (string, uint64) { return "", 0 }
+func TestRelocOnly_AMD64(t *testing.T) {
+	// Symbol layout mirrors the arm64 test: callee at 0x11000 (old)
+	// and 0x22000 (new), otherFn at 0x13000/0x24000; functions start
+	// at 0x10000/0x20000.
+	oldSym := func(addr uint64) (string, uint64) {
+		switch {
+		case addr >= 0x11000 && addr < 0x12000:
+			return "callee", 0x11000
+		case addr >= 0x13000 && addr < 0x14000:
+			return "otherFn", 0x13000
+		}
+		return "", 0
+	}
+	newSym := func(addr uint64) (string, uint64) {
+		switch {
+		case addr >= 0x22000 && addr < 0x23000:
+			return "callee", 0x22000
+		case addr >= 0x24000 && addr < 0x25000:
+			return "otherFn", 0x24000
+		}
+		return "", 0
+	}
 	noData := func(uint64) (string, uint64, uint64) { return "", 0, 0 }
-	if disasm.RelocOnly(objfile.ArchAMD64, code, code, 0, 0, noSym, noSym, noData, noData) {
-		t.Error("amd64 must always fall back to full analysis")
+
+	// call rel32 encodes CALL with a little-endian displacement from
+	// the end of the 5-byte instruction.
+	call := func(rel int32) []byte {
+		return []byte{0xe8, byte(rel), byte(rel >> 8), byte(rel >> 16), byte(rel >> 24)}
+	}
+	lea := func(disp int32) []byte { // LEAQ disp(IP), AX
+		return []byte{0x48, 0x8d, 0x05, byte(disp), byte(disp >> 8), byte(disp >> 16), byte(disp >> 24)}
+	}
+	ret := []byte{0xc3}
+	cat := func(bs ...[]byte) []byte { return bytes.Join(bs, nil) }
+
+	tests := []struct {
+		name     string
+		old, new []byte
+		want     bool
+	}{
+		{
+			// old: 0x10005+0xffb = 0x11000 (callee); new: 0x20005+0x1ffb = 0x22000.
+			name: "same callee at shifted address",
+			old:  cat(call(0xffb), ret),
+			new:  cat(call(0x1ffb), ret),
+			want: true,
+		},
+		{
+			// new calls otherFn at 0x24000 instead.
+			name: "retargeted call",
+			old:  cat(call(0xffb), ret),
+			new:  cat(call(0x3ffb), ret),
+			want: false,
+		},
+		{
+			// Unresolved RIP-relative data on both sides masks alike.
+			name: "rip-relative displacement differs",
+			old:  cat(lea(0x100), ret),
+			new:  cat(lea(0x200), ret),
+			want: true,
+		},
+		{
+			// MOVL $1 vs $2: a real immediate change.
+			name: "immediate differs",
+			old:  cat([]byte{0xbf, 1, 0, 0, 0}, ret),
+			new:  cat([]byte{0xbf, 2, 0, 0, 0}, ret),
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := disasm.RelocOnly(objfile.ArchAMD64, tt.old, tt.new,
+				0x10000, 0x20000, oldSym, newSym, noData, noData)
+			if got != tt.want {
+				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
