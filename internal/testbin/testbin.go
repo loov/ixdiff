@@ -21,6 +21,7 @@ type Config struct {
 	GOARCH  string // target architecture; host architecture when empty
 	GCFlags string // passed as -gcflags
 	LDFlags string // passed as -ldflags
+	Tags    string // passed as -tags; "pad" adds a layout-shifting function
 }
 
 // Build compiles the fixture program with cfg and returns the path to
@@ -93,6 +94,9 @@ func build(cfg Config) (string, error) {
 	}
 	if cfg.LDFlags != "" {
 		args = append(args, "-ldflags", cfg.LDFlags)
+	}
+	if cfg.Tags != "" {
+		args = append(args, "-tags", cfg.Tags)
 	}
 	args = append(args, ".")
 
