@@ -40,6 +40,10 @@ func openMachO(f *os.File) (*Binary, error) {
 		textAddr: text.Addr,
 	}
 
+	for _, sec := range mf.Sections {
+		bin.addRange(sec.Addr, sec.Size)
+	}
+
 	if mf.Symtab != nil {
 		var syms []sizelessSym
 		for _, sym := range mf.Symtab.Syms {

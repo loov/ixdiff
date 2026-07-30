@@ -53,6 +53,10 @@ func openPE(f *os.File) (*Binary, error) {
 		textAddr: imageBase + uint64(text.VirtualAddress),
 	}
 
+	for _, sec := range pf.Sections {
+		bin.addRange(imageBase+uint64(sec.VirtualAddress), uint64(sec.VirtualSize))
+	}
+
 	// COFF symbol values are offsets within their section; SectionNumber
 	// is 1-based. Only symbols in .text are functions of interest.
 	textIndex := -1

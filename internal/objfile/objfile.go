@@ -39,6 +39,10 @@ type Binary struct {
 	Arch Arch
 	// Funcs maps symbol name to function.
 	Funcs map[string]*Func
+	// ranges are the [start, end) virtual address ranges of the
+	// binary's loadable sections, used to recognize address-valued
+	// immediates.
+	ranges [][2]uint64
 
 	// text is the contents of the executable text section,
 	// starting at virtual address textAddr.
@@ -156,6 +160,12 @@ func openELF(f *os.File) (*Binary, error) {
 		textAddr: text.Addr,
 	}
 
+	for _, sec := range ef.Sections {
+		if sec.Flags&elf.SHF_ALLOC != 0 {
+			bin.addRange(sec.Addr, sec.Size)
+		}
+	}
+
 	syms, err := ef.Symbols()
 	if err != nil && err != elf.ErrNoSymbols {
 		return nil, fmt.Errorf("reading symbols: %w", err)
@@ -176,6 +186,24 @@ func openELF(f *os.File) (*Binary, error) {
 		}
 	}
 	return bin, nil
+}
+
+// Contains reports whether addr falls inside any loadable section of
+// the binary.
+func (b *Binary) Contains(addr uint64) bool {
+	for _, r := range b.ranges {
+		if r[0] <= addr && addr < r[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// addRange records a loadable section's virtual address range.
+func (b *Binary) addRange(addr, size uint64) {
+	if size > 0 {
+		b.ranges = append(b.ranges, [2]uint64{addr, addr + size})
+	}
 }
 
 // addFunc records a function if it lies within the text section.

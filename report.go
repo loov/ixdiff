@@ -56,8 +56,10 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 				}
 			}
 
-			oldLines := disasm.Normalize(p.Name, oldInsts, opts)
-			newLines := disasm.Normalize(p.Name, newInsts, opts)
+			oldOpts, newOpts := opts, opts
+			oldOpts.IsAddr, newOpts.IsAddr = old.Contains, new.Contains
+			oldLines := disasm.Normalize(p.Name, oldInsts, oldOpts)
+			newLines := disasm.Normalize(p.Name, newInsts, newOpts)
 			a := &analysis{
 				pair:      p,
 				instDelta: len(newInsts) - len(oldInsts),

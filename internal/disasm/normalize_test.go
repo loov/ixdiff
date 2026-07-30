@@ -54,6 +54,32 @@ func TestNormalize_ARM64Operands(t *testing.T) {
 	}
 }
 
+func TestNormalize_MasksAddressImmediates(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x1000, Len: 7, Op: "MOV", Text: "MOVQ $0x4a2c40, AX"},
+		{Addr: 0x1007, Len: 5, Op: "MOV", Text: "MOVL $0x1, DI"},
+		{Addr: 0x100c, Len: 5, Op: "MOV", Text: "MOVL $0x4a2c40, SI"},
+	}
+	isAddr := func(v uint64) bool { return v >= 0x400000 && v < 0x500000 }
+
+	got := disasm.Normalize("main.f", insts, disasm.Options{IsAddr: isAddr})
+	want := []string{
+		"MOVQ $<addr>, AX", // rodata pointer masked
+		"MOVL $0x1, DI",    // small constant kept
+		"MOVL $<addr>, SI",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("IsAddr mismatch (-want +got):\n%s", diff)
+	}
+
+	plain := disasm.Normalize("main.f", insts, disasm.Options{})
+	for i, in := range insts {
+		if plain[i] != in.Text {
+			t.Errorf("without IsAddr rewrote %q to %q", in.Text, plain[i])
+		}
+	}
+}
+
 func TestNormalize_MaskSP(t *testing.T) {
 	insts := []disasm.Inst{
 		{Addr: 0x1000, Len: 7, Op: "SUB", Text: "SUBQ $0x330, SP"},
@@ -125,5 +151,5 @@ func normalized(t *testing.T, bin *objfile.Binary, fn *objfile.Func) []string {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	return disasm.Normalize(fn.Name, insts, disasm.Options{})
+	return disasm.Normalize(fn.Name, insts, disasm.Options{IsAddr: bin.Contains})
 }

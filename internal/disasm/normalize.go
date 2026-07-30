@@ -88,6 +88,12 @@ type Options struct {
 	// them keeps such a change to a single diff line at the cost of
 	// hiding genuine spill-slot changes.
 	MaskSP bool
+
+	// IsAddr reports whether a value is an address inside the binary.
+	// When set, hex immediates recognized as addresses are masked as
+	// $<addr>: a constant like a loaded rodata pointer is relocation
+	// noise, while small ordinary constants are left untouched.
+	IsAddr func(uint64) bool
 }
 
 // norm carries the per-function state used to normalize operands.
@@ -107,6 +113,7 @@ var (
 
 var (
 	immArg  = regexp.MustCompile(`^\$\d+$`)
+	immHex  = regexp.MustCompile(`^\$0x[0-9a-f]+$`)
 	dispArg = regexp.MustCompile(`^-?\d+\((R\d+|RSP)\)$`)
 	// spDisp matches stack displacements: hex on amd64 (0x10(SP)),
 	// decimal on arm64 (-112(RSP)). A bare (SP) deref has no offset.
@@ -124,6 +131,11 @@ func (n norm) arg(in Inst, arg string, adrp map[string]bool) string {
 	}
 	if m := dispArg.FindStringSubmatch(arg); m != nil && adrp[m[1]] {
 		return "<lo12>(" + m[1] + ")"
+	}
+	if n.opts.IsAddr != nil && immHex.MatchString(arg) {
+		if v, err := strconv.ParseUint(arg[1:], 0, 64); err == nil && n.opts.IsAddr(v) {
+			return "$<addr>"
+		}
 	}
 	if in.Op == "ADD" && immArg.MatchString(arg) {
 		// ADD $lo12, Rn, Rd completing an ADRP pair.
