@@ -166,6 +166,15 @@ func openELF(f *os.File) (*Binary, error) {
 		}
 		bin.addFunc(sym.Name, sym.Value, sym.Size)
 	}
+
+	// ponytail: externally linked Go binaries store the pclntab in
+	// .data.rel.ro without its own section; add a findPclntab scan
+	// over data sections if such binaries turn up.
+	if sec := ef.Section(".gopclntab"); sec != nil {
+		if data, err := sec.Data(); err == nil {
+			bin.loadGoFuncs(data)
+		}
+	}
 	return bin, nil
 }
 

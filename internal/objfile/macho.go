@@ -54,5 +54,11 @@ func openMachO(f *os.File) (*Binary, error) {
 		}
 		bin.addSizeless(syms)
 	}
+
+	if sec := mf.Section("__gopclntab"); sec != nil {
+		if data, err := sec.Data(); err == nil {
+			bin.loadGoFuncs(data)
+		}
+	}
 	return bin, nil
 }

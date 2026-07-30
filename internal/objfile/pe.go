@@ -73,5 +73,19 @@ func openPE(f *os.File) (*Binary, error) {
 		})
 	}
 	bin.addSizeless(syms)
+
+	// PE has no pclntab section; scan the data sections for its header.
+	for _, name := range []string{".rdata", ".data"} {
+		sec := pf.Section(name)
+		if sec == nil {
+			continue
+		}
+		if data, err := sec.Data(); err == nil {
+			if tab := findPclntab(data); tab != nil {
+				bin.loadGoFuncs(tab)
+				break
+			}
+		}
+	}
 	return bin, nil
 }
