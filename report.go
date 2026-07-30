@@ -224,6 +224,16 @@ func writeSummary(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top i
 		}
 	}
 
+	if rollup := pkgRollup(pairs, analyzed); len(rollup) > 0 {
+		fmt.Fprintf(w, "\npackage delta:\n")
+		fmt.Fprintf(w, "  %10s %8s %8s %6s %8s  %s\n",
+			"bytes", "insts", "changed", "added", "removed", "package")
+		for _, d := range rollup {
+			fmt.Fprintf(w, "  %+10d %+8d %8d %6d %8d  %s\n",
+				d.SizeDelta, d.InstDelta, d.Changed, d.Added, d.Removed, d.Name)
+		}
+	}
+
 	writeTop(w, pairs, analyzed, top, sortBy)
 }
 

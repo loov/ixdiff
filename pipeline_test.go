@@ -38,7 +38,7 @@ func TestPipeline_InliningComparison(t *testing.T) {
 
 	out := run(t, base, noinline)
 
-	for _, want := range []string{"functions:", "changed", "total text size delta:", "top "} {
+	for _, want := range []string{"functions:", "changed", "total text size delta:", "package delta:", "top "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary missing %q:\n%s", want, out)
 		}

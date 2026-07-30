@@ -15,6 +15,7 @@ type jsonSummary struct {
 	Counts    jsonCounts       `json:"counts"`
 	SizeDelta int64            `json:"size_delta"`
 	OpDelta   fndiff.OpCount   `json:"op_delta,omitempty"`
+	Packages  []pkgDelta       `json:"packages,omitempty"`
 	Functions []jsonFuncReport `json:"functions"`
 }
 
@@ -98,6 +99,7 @@ func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, pairs []*fndiff.Pai
 		},
 		SizeDelta: sizeDelta,
 		OpDelta:   totalOps,
+		Packages:  pkgRollup(pairs, analyzed),
 		Functions: funcs,
 	})
 }
