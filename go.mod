@@ -10,4 +10,5 @@ require (
 require (
 	github.com/zeebo/errs/v2 v2.0.3 // indirect
 	golang.org/x/arch v0.29.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 )

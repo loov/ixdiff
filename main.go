@@ -14,11 +14,17 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"runtime"
+	"slices"
 	"strconv"
 
 	"github.com/zeebo/clingy"
+
+	"github.com/loov/ixdiff/internal/fndiff"
+	"github.com/loov/ixdiff/internal/objfile"
 )
 
 func main() {
@@ -66,8 +72,59 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		return fmt.Errorf("unknown sort order %q, expected size or insts", c.sortBy)
 	}
 
-	// ponytail: placeholder until the pipeline is wired up.
-	fmt.Fprintf(clingy.Stdout(ctx), "comparing %s -> %s (fn=%q top=%d sort=%s)\n",
-		c.oldPath, c.newPath, c.fn, c.top, c.sortBy)
+	old, err := objfile.Open(c.oldPath)
+	if err != nil {
+		return fmt.Errorf("opening old binary: %w", err)
+	}
+	new, err := objfile.Open(c.newPath)
+	if err != nil {
+		return fmt.Errorf("opening new binary: %w", err)
+	}
+	if old.Arch != new.Arch {
+		return fmt.Errorf("architecture mismatch: %v vs %v", old.Arch, new.Arch)
+	}
+
+	pairs := fndiff.Compare(old, new)
+	stdout := clingy.Stdout(ctx)
+
+	if c.fn != "" {
+		return c.executeFunc(stdout, pairs, old, new)
+	}
+
+	var changedPairs []*fndiff.Pair
+	for _, p := range pairs {
+		if p.State == fndiff.StateChanged {
+			changedPairs = append(changedPairs, p)
+		}
+	}
+	changed, err := analyzeChanged(changedPairs, old, new, runtime.NumCPU())
+	if err != nil {
+		return err
+	}
+	writeSummary(stdout, pairs, changed, c.top, c.sortBy)
+	return nil
+}
+
+// executeFunc reports the assembly diff of the single function named
+// by --fn.
+func (c *cmdDiff) executeFunc(w io.Writer, pairs []*fndiff.Pair, old, new *objfile.Binary) error {
+	i := slices.IndexFunc(pairs, func(p *fndiff.Pair) bool { return p.Name == c.fn })
+	if i < 0 {
+		return fmt.Errorf("function %q not found in either binary", c.fn)
+	}
+	p := pairs[i]
+	switch p.State {
+	case fndiff.StateIdentical:
+		fmt.Fprintf(w, "%s is byte-identical in both binaries\n", p.Name)
+		return nil
+	case fndiff.StateAdded, fndiff.StateRemoved:
+		fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta())
+		return nil
+	}
+	changed, err := analyzeChanged([]*fndiff.Pair{p}, old, new, 1)
+	if err != nil {
+		return err
+	}
+	writeFuncDiff(w, changed[0])
 	return nil
 }

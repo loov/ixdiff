@@ -8,3 +8,5 @@ github.com/zeebo/errs/v2 v2.0.3 h1:WwqAmopgot4ZC+CgIveP+H91Nf78NDEGWjtAXen45Hw=
 github.com/zeebo/errs/v2 v2.0.3/go.mod h1:OKmvVZt4UqpyJrYFykDKm168ZquJ55pbbIVUICNmLN0=
 golang.org/x/arch v0.29.0 h1:8sSET5wB0+exBm0FGmOtdHMqjlRdV2DRD3/IV6OZgho=
 golang.org/x/arch v0.29.0/go.mod h1:0X+GdSIP+kL5wPmpK7sdkEVTt2XoYP0cSjQSbZBwOi8=
+golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
+golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
