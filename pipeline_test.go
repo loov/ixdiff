@@ -112,6 +112,23 @@ func TestPipeline_MissingFunctionErrors(t *testing.T) {
 	}
 }
 
+func TestPipeline_FilterScopesSummary(t *testing.T) {
+	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
+	noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", GCFlags: "-l"})
+
+	out := run(t, "--filter", "main.", base, noinline)
+	if strings.Contains(out, "runtime.") || strings.Contains(out, "slices.") {
+		t.Errorf("--filter main. leaked other packages:\n%s", out)
+	}
+	if !strings.Contains(out, "main.sum") {
+		t.Errorf("--filter main. lost main functions:\n%s", out)
+	}
+
+	if out := run(t, "--filter", "~^main\\.(sum|add)$", base, noinline); !strings.Contains(out, "main.sum") {
+		t.Errorf("regexp filter did not match main.sum:\n%s", out)
+	}
+}
+
 func TestPipeline_JSONOutput(t *testing.T) {
 	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
 	noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", GCFlags: "-l"})

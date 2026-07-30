@@ -12,12 +12,13 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
-	"cmp"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -48,8 +49,9 @@ func main() {
 
 // cmdDiff compares two binaries and reports their assembly differences.
 type cmdDiff struct {
-	fns    []string
-	top    int
+	fns     []string
+	filters []string
+	top     int
 	sortBy string
 	maskSP bool
 	json   bool
@@ -67,6 +69,8 @@ func (c *cmdDiff) norm() disasm.Options {
 // Setup declares the flags and arguments for the diff command.
 func (c *cmdDiff) Setup(params clingy.Parameters) {
 	c.fns = params.Flag("fn", "diff the function with this name or substring (repeatable)", []string(nil),
+		clingy.Repeated).([]string)
+	c.filters = params.Flag("filter", "limit the summary to functions containing this substring, ~regexp (repeatable)", []string(nil),
 		clingy.Repeated).([]string)
 	c.top = params.Flag("top", "number of functions to list in ranking tables", 100,
 		clingy.Transform(strconv.Atoi)).(int)
@@ -107,6 +111,11 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 
 	if len(c.fns) > 0 {
 		return c.executeFuncs(stdout, pairs, old, new)
+	}
+
+	pairs, err = filterPairs(pairs, c.filters)
+	if err != nil {
+		return err
 	}
 
 	var nonIdentical []*fndiff.Pair
@@ -178,6 +187,39 @@ func (c *cmdDiff) writeJSONFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *ob
 		}
 	}
 	return encodeJSON(w, reports)
+}
+
+// filterPairs keeps pairs whose name matches any filter: a substring,
+// or a regular expression when prefixed with ~. Without filters all
+// pairs are kept.
+func filterPairs(pairs []*fndiff.Pair, filters []string) ([]*fndiff.Pair, error) {
+	if len(filters) == 0 {
+		return pairs, nil
+	}
+	matchers := make([]func(string) bool, 0, len(filters))
+	for _, f := range filters {
+		if pattern, ok := strings.CutPrefix(f, "~"); ok {
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return nil, fmt.Errorf("invalid --filter %q: %w", f, err)
+			}
+			matchers = append(matchers, re.MatchString)
+		} else {
+			matchers = append(matchers, func(name string) bool {
+				return strings.Contains(name, f)
+			})
+		}
+	}
+	var kept []*fndiff.Pair
+	for _, p := range pairs {
+		for _, match := range matchers {
+			if match(p.Name) {
+				kept = append(kept, p)
+				break
+			}
+		}
+	}
+	return kept, nil
 }
 
 // matchFuncs resolves a --fn value: an exact name wins, otherwise all
