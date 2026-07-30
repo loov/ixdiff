@@ -56,6 +56,7 @@ type cmdDiff struct {
 	maskSP bool
 	json   bool
 	sideBy bool
+	blocks bool
 	color  string
 	pal    palette
 
@@ -82,6 +83,8 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 	c.json = params.Flag("json", "emit machine-readable JSON instead of text", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 	c.sideBy = params.Flag("side-by-side", "show function diffs as two columns", false,
+		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
+	c.blocks = params.Flag("blocks", "match basic blocks before diffing, tolerating block reordering", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 	c.color = params.Flag("color", "colorize diffs: auto, always, or never", "auto").(string)
 
@@ -327,6 +330,9 @@ func (c *cmdDiff) writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binar
 			return err
 		}
 	default:
+		if c.blocks {
+			return writeFuncBlocks(w, p, old, new, c.norm(), c.pal)
+		}
 		analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, c.norm())
 		if err != nil {
 			return err

@@ -495,6 +495,11 @@ func writeFuncDiff(w io.Writer, a *analysis, pal palette) {
 		fmt.Fprintf(w, "bytes differ only by relocation; normalized assembly is identical\n")
 		return
 	}
+	writeHunks(w, a, pal)
+}
+
+// writeHunks renders the hunked, aligned, emphasized edit script of a.
+func writeHunks(w io.Writer, a *analysis, pal palette) {
 	for _, hunk := range hunks(diffLines(a)) {
 		fmt.Fprintln(w, pal.paint(pal.hunk, fmt.Sprintf("@@ %s @@", hunkRange(hunk))))
 		texts := make([]string, len(hunk))
