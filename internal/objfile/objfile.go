@@ -4,10 +4,11 @@
 package objfile
 
 import (
+	"bytes"
 	"cmp"
 	"debug/elf"
 	"fmt"
-	"os"
+	"io"
 	"slices"
 )
 
@@ -33,8 +34,9 @@ func (a Arch) String() string {
 	}
 }
 
-// Binary is a loaded executable. It holds no open resources; Open
-// reads everything it needs and closes the file.
+// Binary is a loaded executable, backed by a read-only memory mapping
+// of the file. Close releases the mapping; Func.Code slices become
+// invalid afterwards.
 type Binary struct {
 	Arch Arch
 	// Funcs maps symbol name to function.
@@ -44,13 +46,23 @@ type Binary struct {
 	// immediates.
 	ranges [][2]uint64
 
-	// text is the contents of the executable text section,
+	// text is the executable text section, a slice into the mapping,
 	// starting at virtual address textAddr.
-	//
-	// ponytail: whole .text kept in memory (~100MB for a 200MB
-	// binary); switch to mmap if profiling shows it matters.
 	text     []byte
 	textAddr uint64
+
+	// closeMapping releases the file mapping.
+	closeMapping func() error
+}
+
+// Close releases the binary's file mapping.
+func (b *Binary) Close() error {
+	if b.closeMapping == nil {
+		return nil
+	}
+	err := b.closeMapping()
+	b.closeMapping = nil
+	return err
 }
 
 // Func is a single function inside a binary.
@@ -74,30 +86,49 @@ func (f *Func) Code() []byte {
 	return b.text[off : off+f.Size]
 }
 
-// Open reads the binary at path. It detects the file format from its
-// magic bytes; currently ELF, Mach-O, and PE are recognized.
+// Open maps the binary at path and parses it. It detects the file
+// format from its magic bytes; currently ELF, Mach-O, and PE are
+// recognized.
 func Open(path string) (*Binary, error) {
-	f, err := os.Open(path)
+	data, closeMapping, err := mmapFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-
-	magic := make([]byte, 4)
-	if _, err := f.ReadAt(magic, 0); err != nil {
-		return nil, fmt.Errorf("reading magic of %q: %w", path, err)
+	bin, err := parse(data)
+	if err != nil {
+		_ = closeMapping() // the parse error is the interesting one
+		return nil, fmt.Errorf("%q: %w", path, err)
 	}
+	bin.closeMapping = closeMapping
+	return bin, nil
+}
 
+// parse dispatches on the magic bytes of a mapped binary.
+func parse(data []byte) (*Binary, error) {
+	if len(data) < 4 {
+		return nil, fmt.Errorf("too short to be a binary")
+	}
+	r := bytes.NewReader(data)
+	magic := string(data[:4])
 	switch {
-	case string(magic) == elf.ELFMAG:
-		return openELF(f)
-	case string(magic) == "\xcf\xfa\xed\xfe" || string(magic) == "\xfe\xed\xfa\xcf":
-		return openMachO(f)
+	case magic == elf.ELFMAG:
+		return openELF(r, data)
+	case magic == "\xcf\xfa\xed\xfe" || magic == "\xfe\xed\xfa\xcf":
+		return openMachO(r, data)
 	case magic[0] == 'M' && magic[1] == 'Z':
-		return openPE(f)
+		return openPE(r, data)
 	default:
-		return nil, fmt.Errorf("unsupported binary format in %q", path)
+		return nil, fmt.Errorf("unsupported binary format")
 	}
+}
+
+// sectionSlice returns the file-backed contents of a section as a
+// zero-copy slice into the mapping, or nil when the range is invalid.
+func sectionSlice(data []byte, off, size uint64) []byte {
+	if off > uint64(len(data)) || size > uint64(len(data))-off {
+		return nil
+	}
+	return data[off : off+size]
 }
 
 // sizelessSym is a symbol from a format that does not record sizes
@@ -128,8 +159,8 @@ func (b *Binary) addSizeless(syms []sizelessSym) {
 }
 
 // openELF loads an ELF executable.
-func openELF(f *os.File) (*Binary, error) {
-	ef, err := elf.NewFile(f)
+func openELF(r io.ReaderAt, data []byte) (*Binary, error) {
+	ef, err := elf.NewFile(r)
 	if err != nil {
 		return nil, err
 	}
@@ -148,9 +179,9 @@ func openELF(f *os.File) (*Binary, error) {
 	if text == nil {
 		return nil, fmt.Errorf("no .text section")
 	}
-	code, err := text.Data()
-	if err != nil {
-		return nil, fmt.Errorf("reading .text: %w", err)
+	code := sectionSlice(data, text.Offset, text.FileSize)
+	if code == nil || text.Flags&elf.SHF_COMPRESSED != 0 {
+		return nil, fmt.Errorf("unreadable .text section")
 	}
 
 	bin := &Binary{

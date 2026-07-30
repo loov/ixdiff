@@ -3,12 +3,12 @@ package objfile
 import (
 	"debug/pe"
 	"fmt"
-	"os"
+	"io"
 )
 
 // openPE loads a PE (Windows) executable.
-func openPE(f *os.File) (*Binary, error) {
-	pf, err := pe.NewFile(f)
+func openPE(r io.ReaderAt, data []byte) (*Binary, error) {
+	pf, err := pe.NewFile(r)
 	if err != nil {
 		return nil, err
 	}
@@ -37,13 +37,11 @@ func openPE(f *os.File) (*Binary, error) {
 	if text == nil {
 		return nil, fmt.Errorf("no .text section")
 	}
-	code, err := text.Data()
-	if err != nil {
-		return nil, fmt.Errorf("reading .text: %w", err)
-	}
 	// The section's on-disk data can be padded past its virtual size.
-	if uint64(text.VirtualSize) < uint64(len(code)) {
-		code = code[:text.VirtualSize]
+	size := min(uint64(text.Size), uint64(text.VirtualSize))
+	code := sectionSlice(data, uint64(text.Offset), size)
+	if code == nil {
+		return nil, fmt.Errorf("unreadable .text section")
 	}
 
 	bin := &Binary{

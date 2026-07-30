@@ -3,13 +3,13 @@ package objfile
 import (
 	"debug/macho"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 )
 
 // openMachO loads a Mach-O executable.
-func openMachO(f *os.File) (*Binary, error) {
-	mf, err := macho.NewFile(f)
+func openMachO(r io.ReaderAt, data []byte) (*Binary, error) {
+	mf, err := macho.NewFile(r)
 	if err != nil {
 		return nil, err
 	}
@@ -28,9 +28,9 @@ func openMachO(f *os.File) (*Binary, error) {
 	if text == nil {
 		return nil, fmt.Errorf("no __text section")
 	}
-	code, err := text.Data()
-	if err != nil {
-		return nil, fmt.Errorf("reading __text: %w", err)
+	code := sectionSlice(data, uint64(text.Offset), text.Size)
+	if code == nil {
+		return nil, fmt.Errorf("unreadable __text section")
 	}
 
 	bin := &Binary{

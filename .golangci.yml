@@ -13,3 +13,4 @@ linters:
         # Deferred Close on read-only files has no actionable error.
         - (*os.File).Close
         - (*debug/elf.File).Close
+        - (*github.com/loov/ixdiff/internal/objfile.Binary).Close

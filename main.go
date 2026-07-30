@@ -98,10 +98,12 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("opening old binary: %w", err)
 	}
+	defer old.Close()
 	new, err := objfile.Open(c.newPath)
 	if err != nil {
 		return fmt.Errorf("opening new binary: %w", err)
 	}
+	defer new.Close()
 	if old.Arch != new.Arch {
 		return fmt.Errorf("architecture mismatch: %v vs %v", old.Arch, new.Arch)
 	}
