@@ -2,6 +2,7 @@ package disasm
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,11 +34,33 @@ func Lookup(bin *objfile.Binary) SymLookup {
 	}
 }
 
-// Normalize renders instructions as diff-ready lines by removing
-// operands that change whenever code or data moves in the binary,
-// while keeping everything an optimization could genuinely change:
+// Line is one normalized instruction. When the instruction branches
+// inside the function, Target is the index of the target instruction
+// and Text contains an internal marker where the label belongs; use
+// Render to substitute the final label text.
+type Line struct {
+	Text   string
+	Target int // target instruction index; -1 when not a branch
+}
+
+// targetMark is the placeholder inside Line.Text replaced by the
+// label during Render. Assembly text never contains control bytes.
+const targetMark = "\x01"
+
+// Normalize renders instructions as diff-ready lines: NormalizeLines
+// with labels numbered by target order.
+func Normalize(name string, insts []Inst, opts Options) []string {
+	lines := NormalizeLines(name, insts, opts)
+	return Render(lines, TargetOrderLabels(lines))
+}
+
+// NormalizeLines rewrites instructions into diff-ready lines by
+// removing operands that change whenever code or data moves in the
+// binary, while keeping everything an optimization could genuinely
+// change:
 //
-//   - branch targets inside the function become stable L<index> labels
+//   - branch targets inside the function become label slots, resolved
+//     by Render
 //   - absolute addresses that do not resolve to anything become <addr>
 //   - IP-relative data displacements (amd64) become <data>(IP)
 //   - ADRP page offsets (arm64) become <page>(PC), and the follow-up
@@ -45,7 +68,7 @@ func Lookup(bin *objfile.Binary) SymLookup {
 //
 // Call targets are expected to be symbolized already, via a Lookup
 // passed to Decode. Plain immediates are kept untouched.
-func Normalize(name string, insts []Inst, opts Options) []string {
+func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 	n := norm{name: name, opts: opts, indexAt: make(map[uint64]int, len(insts))}
 	for i, in := range insts {
 		n.indexAt[in.Addr] = i
@@ -59,13 +82,14 @@ func Normalize(name string, insts []Inst, opts Options) []string {
 	// plain immediate or displacement, which must be masked too.
 	adrp := map[string]bool{}
 
-	lines := make([]string, len(insts))
+	lines := make([]Line, len(insts))
 	for i, in := range insts {
 		op, rest, hasArgs := strings.Cut(in.Text, " ")
 		if !hasArgs {
-			lines[i] = in.Text
+			lines[i] = Line{Text: in.Text, Target: -1}
 			continue
 		}
+		n.target = -1
 		args := strings.Split(rest, ", ")
 		for j, arg := range args {
 			args[j] = n.arg(in, arg, adrp)
@@ -76,9 +100,46 @@ func Normalize(name string, insts []Inst, opts Options) []string {
 		} else {
 			delete(adrp, dest)
 		}
-		lines[i] = op + " " + strings.Join(args, ", ")
+		lines[i] = Line{Text: op + " " + strings.Join(args, ", "), Target: n.target}
 	}
 	return lines
+}
+
+// Render substitutes each line's label slot using labelOf, which maps
+// a target instruction index to its label text.
+func Render(lines []Line, labelOf func(int) string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		if l.Target >= 0 {
+			out[i] = strings.Replace(l.Text, targetMark, labelOf(l.Target), 1)
+		} else {
+			out[i] = l.Text
+		}
+	}
+	return out
+}
+
+// TargetOrderLabels numbers the distinct branch targets of lines as
+// L1..Ln in instruction order. Numbering by target order rather than
+// instruction index keeps labels stable when non-target instructions
+// are inserted or removed.
+func TargetOrderLabels(lines []Line) func(int) string {
+	var targets []int
+	seen := map[int]bool{}
+	for _, l := range lines {
+		if l.Target >= 0 && !seen[l.Target] {
+			seen[l.Target] = true
+			targets = append(targets, l.Target)
+		}
+	}
+	slices.Sort(targets)
+	number := make(map[int]int, len(targets))
+	for i, t := range targets {
+		number[t] = i + 1
+	}
+	return func(target int) string {
+		return "L" + strconv.Itoa(number[target])
+	}
 }
 
 // Options selects optional normalization rules.
@@ -102,6 +163,9 @@ type norm struct {
 	opts    Options
 	start   uint64
 	indexAt map[uint64]int
+	// target is the branch target index of the instruction being
+	// rewritten, -1 when it has none.
+	target int
 }
 
 var (
@@ -123,7 +187,7 @@ var (
 // arg rewrites a single operand according to the Normalize rules;
 // operands it does not recognize pass through unchanged. adrp is the
 // set of registers currently holding an ADRP page address.
-func (n norm) arg(in Inst, arg string, adrp map[string]bool) string {
+func (n *norm) arg(in Inst, arg string, adrp map[string]bool) string {
 	if n.opts.MaskSP {
 		if m := spDisp.FindStringSubmatch(arg); m != nil {
 			return "<sp>(" + m[1] + ")"
@@ -151,7 +215,7 @@ func (n norm) arg(in Inst, arg string, adrp map[string]bool) string {
 		v, err := strconv.ParseUint(arg, 0, 64)
 		if err == nil {
 			if idx, ok := n.indexAt[v]; ok {
-				return label(idx)
+				return n.mark(idx)
 			}
 		}
 		return "<addr>"
@@ -165,7 +229,7 @@ func (n norm) arg(in Inst, arg string, adrp map[string]bool) string {
 		d, err := strconv.ParseInt(pcRel.FindStringSubmatch(arg)[1], 10, 64)
 		if err == nil {
 			if idx, ok := n.indexAt[uint64(int64(in.Addr)+d*4)]; ok {
-				return label(idx)
+				return n.mark(idx)
 			}
 		}
 		return "<addr>(PC)"
@@ -186,13 +250,15 @@ func (n norm) arg(in Inst, arg string, adrp map[string]bool) string {
 			off, _ = strconv.ParseUint(m[2][1:], 10, 64)
 		}
 		if idx, ok := n.indexAt[n.start+off]; ok {
-			return label(idx)
+			return n.mark(idx)
 		}
 		return arg
 	}
 }
 
-// label formats a stable intra-function branch target.
-func label(idx int) string {
-	return "L" + strconv.Itoa(idx)
+// mark records the branch target of the current instruction and
+// returns the label placeholder.
+func (n *norm) mark(idx int) string {
+	n.target = idx
+	return targetMark
 }

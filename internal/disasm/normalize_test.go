@@ -21,12 +21,12 @@ func TestNormalize_RewritesUnstableOperands(t *testing.T) {
 		{Addr: 0x1020, Len: 1, Op: "RET", Text: "RET"},
 	}
 	want := []string{
-		"CMPQ SP, 0x10(R14)",           // register displacement kept
-		"JBE L6",                       // branch -> label of RET
-		"MOVQ <data>(IP), CX",          // data ref masked
-		"CALL runtime.makeslice(SB)",   // symbolized call kept
-		"MOVL $0x1, DI",                // immediate kept
-		"JMP L0",                       // self-reference -> entry label
+		"CMPQ SP, 0x10(R14)",         // register displacement kept
+		"JBE L2",                     // branch -> label of RET
+		"MOVQ <data>(IP), CX",        // data ref masked
+		"CALL runtime.makeslice(SB)", // symbolized call kept
+		"MOVL $0x1, DI",              // immediate kept
+		"JMP L1",                     // self-reference -> entry label
 		"RET",
 	}
 	got := disasm.Normalize("main.f", insts, disasm.Options{})
@@ -44,13 +44,37 @@ func TestNormalize_ARM64Operands(t *testing.T) {
 	}
 	want := []string{
 		"ADRP <page>(PC), R27",
-		"BLS L3",
+		"BLS L1",
 		"MOVD $42, R0",
 		"RET",
 	}
 	got := disasm.Normalize("main.f", insts, disasm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestNormalize_LabelsStableUnderInsertion checks that inserting an
+// instruction that is not a branch target does not renumber labels:
+// numbering follows target order, not instruction index.
+func TestNormalize_LabelsStableUnderInsertion(t *testing.T) {
+	base := []disasm.Inst{
+		{Addr: 0x1000, Len: 2, Op: "JBE", Text: "JBE 0x1008"},
+		{Addr: 0x1002, Len: 5, Op: "MOV", Text: "MOVL $0x1, DI"},
+		{Addr: 0x1007, Len: 1, Op: "NOP", Text: "NOPL"},
+		{Addr: 0x1008, Len: 1, Op: "RET", Text: "RET"},
+	}
+	inserted := []disasm.Inst{
+		{Addr: 0x1000, Len: 2, Op: "JBE", Text: "JBE 0x100d"},
+		{Addr: 0x1002, Len: 5, Op: "MOV", Text: "MOVL $0x1, DI"},
+		{Addr: 0x1007, Len: 5, Op: "MOV", Text: "MOVL $0x2, SI"}, // new
+		{Addr: 0x100c, Len: 1, Op: "NOP", Text: "NOPL"},
+		{Addr: 0x100d, Len: 1, Op: "RET", Text: "RET"},
+	}
+	a := disasm.Normalize("main.f", base, disasm.Options{})
+	b := disasm.Normalize("main.f", inserted, disasm.Options{})
+	if a[0] != "JBE L1" || b[0] != "JBE L1" {
+		t.Errorf("branch labels differ despite unchanged structure: %q vs %q", a[0], b[0])
 	}
 }
 
