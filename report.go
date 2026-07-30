@@ -486,20 +486,27 @@ func hunks(lines []diffLine) [][]diffLine {
 
 // writeFuncDiff prints a unified-style diff of one function, grouped
 // into hunks with an address column.
-func writeFuncDiff(w io.Writer, a *analysis) {
+func writeFuncDiff(w io.Writer, a *analysis, pal palette) {
 	writeDiffHeader(w, a.pair)
 	if a.noise {
 		fmt.Fprintf(w, "bytes differ only by relocation; normalized assembly is identical\n")
 		return
 	}
 	for _, hunk := range hunks(diffLines(a)) {
-		fmt.Fprintf(w, "@@ %s @@\n", hunkRange(hunk))
+		fmt.Fprintln(w, pal.paint(pal.hunk, fmt.Sprintf("@@ %s @@", hunkRange(hunk))))
 		texts := make([]string, len(hunk))
 		for i, l := range hunk {
 			texts[i] = l.text
 		}
 		for i, text := range alignOps(texts) {
-			fmt.Fprintf(w, "%c%x: %s\n", " -+"[hunk[i].op], hunk[i].addr(), text)
+			line := fmt.Sprintf("%c%x: %s", " -+"[hunk[i].op], hunk[i].addr(), text)
+			switch hunk[i].op {
+			case fndiff.OpDelete:
+				line = pal.paint(pal.del, line)
+			case fndiff.OpInsert:
+				line = pal.paint(pal.ins, line)
+			}
+			fmt.Fprintln(w, line)
 		}
 	}
 }
@@ -605,14 +612,14 @@ const sideColumnWidth = 60
 // old on the left and new on the right, with a marker column between:
 // space for unchanged rows, < for deletions, > for insertions, and |
 // for replacements.
-func writeFuncDiffSide(w io.Writer, a *analysis) {
+func writeFuncDiffSide(w io.Writer, a *analysis, pal palette) {
 	writeDiffHeader(w, a.pair)
 	if a.noise {
 		fmt.Fprintf(w, "bytes differ only by relocation; normalized assembly is identical\n")
 		return
 	}
 	for _, hunk := range hunks(diffLines(a)) {
-		fmt.Fprintf(w, "@@ %s @@\n", hunkRange(hunk))
+		fmt.Fprintln(w, pal.paint(pal.hunk, fmt.Sprintf("@@ %s @@", hunkRange(hunk))))
 
 		texts := make([]string, len(hunk))
 		for i, l := range hunk {
@@ -659,7 +666,16 @@ func writeFuncDiffSide(w io.Writer, a *analysis) {
 			case row.new != nil && row.new.op == fndiff.OpInsert:
 				marker = '>'
 			}
-			fmt.Fprintf(w, "%-*s %c %s\n", width, left, marker, right)
+			// Pad before painting: escape codes must not count
+			// toward the column width.
+			left = fmt.Sprintf("%-*s", width, left)
+			if row.old != nil && row.old.op == fndiff.OpDelete {
+				left = pal.paint(pal.del, left)
+			}
+			if row.new != nil && row.new.op == fndiff.OpInsert {
+				right = pal.paint(pal.ins, right)
+			}
+			fmt.Fprintf(w, "%s %c %s\n", left, marker, right)
 		}
 	}
 }

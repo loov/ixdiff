@@ -119,6 +119,23 @@ func TestPipeline_MissingFunctionErrors(t *testing.T) {
 	}
 }
 
+func TestPipeline_ColorModes(t *testing.T) {
+	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
+	noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", GCFlags: "-l"})
+
+	plain := run(t, "--fn", "main.main", base, noinline)
+	if strings.Contains(plain, "\x1b[") {
+		t.Error("default (non-tty) output contains escape codes")
+	}
+	colored := run(t, "--color", "always", "--fn", "main.main", base, noinline)
+	if !strings.Contains(colored, "\x1b[32m") || !strings.Contains(colored, "\x1b[31m") {
+		t.Error("--color always output lacks insert/delete colors")
+	}
+	if out := run(t, "--color", "never", "--fn", "main.main", base, noinline); strings.Contains(out, "\x1b[") {
+		t.Error("--color never output contains escape codes")
+	}
+}
+
 func TestPipeline_FilterScopesSummary(t *testing.T) {
 	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
 	noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", GCFlags: "-l"})

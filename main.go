@@ -56,6 +56,8 @@ type cmdDiff struct {
 	maskSP bool
 	json   bool
 	sideBy bool
+	color  string
+	pal    palette
 
 	oldPath string
 	newPath string
@@ -81,6 +83,7 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 	c.sideBy = params.Flag("side-by-side", "show function diffs as two columns", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
+	c.color = params.Flag("color", "colorize diffs: auto, always, or never", "auto").(string)
 
 	c.oldPath = params.Arg("old", "path to the baseline binary").(string)
 	c.newPath = params.Arg("new", "path to the changed binary").(string)
@@ -92,6 +95,10 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	case "size", "insts":
 	default:
 		return fmt.Errorf("unknown sort order %q, expected size or insts", c.sortBy)
+	}
+	var err error
+	if c.pal, err = resolvePalette(c.color); err != nil {
+		return err
 	}
 
 	old, err := objfile.Open(c.oldPath)
@@ -327,9 +334,9 @@ func (c *cmdDiff) writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binar
 		a = analyzed[0]
 	}
 	if c.sideBy {
-		writeFuncDiffSide(w, a)
+		writeFuncDiffSide(w, a, c.pal)
 	} else {
-		writeFuncDiff(w, a)
+		writeFuncDiff(w, a, c.pal)
 	}
 	return nil
 }

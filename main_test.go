@@ -37,17 +37,17 @@ func TestCmdDiff_Setup_ResolvesFlagsAndArgs(t *testing.T) {
 		{
 			name: "defaults",
 			args: []string{"old.bin", "new.bin"},
-			want: cmdDiff{top: 100, sortBy: "size", oldPath: "old.bin", newPath: "new.bin"},
+			want: cmdDiff{top: 100, sortBy: "size", color: "auto", oldPath: "old.bin", newPath: "new.bin"},
 		},
 		{
 			name: "all flags",
 			args: []string{"--fn", "main.main", "--top", "10", "--sort", "insts", "a", "b"},
-			want: cmdDiff{fns: []string{"main.main"}, top: 10, sortBy: "insts", oldPath: "a", newPath: "b"},
+			want: cmdDiff{fns: []string{"main.main"}, top: 10, sortBy: "insts", color: "auto", oldPath: "a", newPath: "b"},
 		},
 		{
 			name: "repeated fn",
 			args: []string{"--fn", "main.main", "--fn", "main.sum", "a", "b"},
-			want: cmdDiff{fns: []string{"main.main", "main.sum"}, top: 100, sortBy: "size", oldPath: "a", newPath: "b"},
+			want: cmdDiff{fns: []string{"main.main", "main.sum"}, top: 100, sortBy: "size", color: "auto", oldPath: "a", newPath: "b"},
 		},
 	}
 	for _, tt := range tests {
@@ -56,7 +56,7 @@ func TestCmdDiff_Setup_ResolvesFlagsAndArgs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			if diff := cmp.Diff(&tt.want, got, cmp.AllowUnexported(cmdDiff{})); diff != "" {
+			if diff := cmp.Diff(&tt.want, got, cmp.AllowUnexported(cmdDiff{}, palette{})); diff != "" {
 				t.Errorf("options mismatch (-want +got):\n%s", diff)
 			}
 		})
