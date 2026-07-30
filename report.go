@@ -501,7 +501,12 @@ func writeFuncDiff(w io.Writer, a *analysis, pal palette) {
 		for i, l := range hunk {
 			texts[i] = l.text
 		}
-		for i, text := range alignOps(texts) {
+		aligned := alignOps(texts)
+		emphasized := emphasize(hunk, aligned, pal)
+		for i, text := range aligned {
+			if e, ok := emphasized[&hunk[i]]; ok {
+				text = e
+			}
 			line := fmt.Sprintf("%c%x: %s", " -+"[hunk[i].op], hunk[i].addr(), text)
 			switch hunk[i].op {
 			case fndiff.OpDelete:
@@ -512,6 +517,31 @@ func writeFuncDiff(w io.Writer, a *analysis, pal palette) {
 			fmt.Fprintln(w, line)
 		}
 	}
+}
+
+// emphasize pairs each run of deletions with the following run of
+// insertions and, when the paired lines share their shape, returns
+// replacement texts with only the differing operands emphasized.
+func emphasize(hunk []diffLine, aligned []string, pal palette) map[*diffLine]string {
+	if pal.emph == "" {
+		return nil
+	}
+	alignedOf := make(map[*diffLine]string, len(hunk))
+	for i := range hunk {
+		alignedOf[&hunk[i]] = aligned[i]
+	}
+	out := map[*diffLine]string{}
+	for _, row := range sideRows(hunk) {
+		if row.old == nil || row.new == nil || row.old == row.new {
+			continue
+		}
+		oldText, newText, ok := pal.emphasizeDiff(alignedOf[row.old], alignedOf[row.new])
+		if ok {
+			out[row.old] = oldText
+			out[row.new] = newText
+		}
+	}
+	return out
 }
 
 // maxOpWidth caps the mnemonic column so one unusually long mnemonic
@@ -633,8 +663,11 @@ func writeFuncDiffSide(w io.Writer, a *analysis, pal palette) {
 		for i := range hunk {
 			alignedOf[&hunk[i]] = aligned[i]
 		}
-		// cell renders one side of a row with that side's address.
-		cell := func(l *diffLine, addr uint64) string {
+		emphasized := emphasize(hunk, aligned, pal)
+		// plain renders one side of a row with that side's address,
+		// without escape codes; all width math uses it. show adds the
+		// operand emphasis unless the cell was truncated.
+		plain := func(l *diffLine, addr uint64) string {
 			if l == nil {
 				return ""
 			}
@@ -644,22 +677,31 @@ func writeFuncDiffSide(w io.Writer, a *analysis, pal palette) {
 			}
 			return s
 		}
+		show := func(l *diffLine, addr uint64) string {
+			s := plain(l, addr)
+			if e, ok := emphasized[l]; ok && !strings.HasSuffix(s, "...") {
+				return fmt.Sprintf("%x: %s", addr, e)
+			}
+			return s
+		}
 
 		rows := sideRows(hunk)
 		width := 0
 		for _, row := range rows {
 			if row.old != nil {
-				width = max(width, len(cell(row.old, row.old.oldAddr)))
+				width = max(width, len(plain(row.old, row.old.oldAddr)))
 			}
 		}
 		for _, row := range rows {
 			var left, right string
+			pad := width
 			marker := ' '
 			if row.old != nil {
-				left = cell(row.old, row.old.oldAddr)
+				left = show(row.old, row.old.oldAddr)
+				pad = width - len(plain(row.old, row.old.oldAddr))
 			}
 			if row.new != nil {
-				right = cell(row.new, row.new.newAddr)
+				right = show(row.new, row.new.newAddr)
 			}
 			switch {
 			case row.old != nil && row.old.op == fndiff.OpDelete && row.new != nil:
@@ -669,9 +711,9 @@ func writeFuncDiffSide(w io.Writer, a *analysis, pal palette) {
 			case row.new != nil && row.new.op == fndiff.OpInsert:
 				marker = '>'
 			}
-			// Pad before painting: escape codes must not count
-			// toward the column width.
-			left = fmt.Sprintf("%-*s", width, left)
+			// Pad by visible length, then paint: escape codes must
+			// not count toward the column width.
+			left += strings.Repeat(" ", pad)
 			if row.old != nil && row.old.op == fndiff.OpDelete {
 				left = pal.paint(pal.del, left)
 			}

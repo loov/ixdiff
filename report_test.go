@@ -173,6 +173,30 @@ func TestOps_ExcludesBytePadding(t *testing.T) {
 	}
 }
 
+func TestEmphasizeDiff_MarksOnlyChangedOperands(t *testing.T) {
+	oldText, newText, ok := ansi.emphasizeDiff(
+		"MOVQ   R11, 0x390(SP)",
+		"MOVQ   R11, 0x328(SP)")
+	if !ok {
+		t.Fatal("expected same-shape lines to emphasize")
+	}
+	wantOld := "MOVQ   R11, " + ansi.emph + "0x390(SP)" + ansi.unemph
+	wantNew := "MOVQ   R11, " + ansi.emph + "0x328(SP)" + ansi.unemph
+	if oldText != wantOld || newText != wantNew {
+		t.Errorf("got:\n%q\n%q\nwant:\n%q\n%q", oldText, newText, wantOld, wantNew)
+	}
+
+	if _, _, ok := ansi.emphasizeDiff("MOVQ R11, R12", "LEAQ R11, R12"); ok {
+		t.Error("different mnemonics must fall back to whole-line coloring")
+	}
+	if _, _, ok := ansi.emphasizeDiff("CALL a(SB)", "MOVQ R11, R12"); ok {
+		t.Error("different operand counts must fall back to whole-line coloring")
+	}
+	if _, _, ok := (palette{}).emphasizeDiff("MOVQ R11, A", "MOVQ R11, B"); ok {
+		t.Error("plain palette must not emphasize")
+	}
+}
+
 func TestAlignOps_PadsMnemonicsToCommonColumn(t *testing.T) {
 	got := alignOps([]string{
 		"MOVQ R11, 0x390(SP)",
