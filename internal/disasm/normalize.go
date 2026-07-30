@@ -178,10 +178,13 @@ var (
 var (
 	immArg  = regexp.MustCompile(`^\$\d+$`)
 	immHex  = regexp.MustCompile(`^\$0x[0-9a-f]+$`)
-	dispArg = regexp.MustCompile(`^-?\d+\((R\d+|RSP)\)$`)
+	// A zero displacement renders as a bare (Rn), so the offset part
+	// is optional: masking must treat 0(Rn) and (Rn) alike or an
+	// offset shifting to or from zero leaks through.
+	dispArg = regexp.MustCompile(`^(?:-?\d+)?\((R\d+|RSP)\)$`)
 	// spDisp matches stack displacements: hex on amd64 (0x10(SP)),
-	// decimal on arm64 (-112(RSP)). A bare (SP) deref has no offset.
-	spDisp = regexp.MustCompile(`^-?(?:0x[0-9a-f]+|\d+)\((SP|RSP)\)$`)
+	// decimal on arm64 (-112(RSP)).
+	spDisp = regexp.MustCompile(`^(?:-?(?:0x[0-9a-f]+|\d+))?\((SP|RSP)\)$`)
 )
 
 // arg rewrites a single operand according to the Normalize rules;
