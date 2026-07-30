@@ -17,9 +17,11 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"cmp"
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/zeebo/clingy"
 
@@ -55,7 +57,7 @@ type cmdDiff struct {
 
 // Setup declares the flags and arguments for the diff command.
 func (c *cmdDiff) Setup(params clingy.Parameters) {
-	c.fns = params.Flag("fn", "show the assembly diff of a function (repeatable)", []string(nil),
+	c.fns = params.Flag("fn", "diff the function with this name or substring (repeatable)", []string(nil),
 		clingy.Repeated).([]string)
 	c.top = params.Flag("top", "number of functions to list in ranking tables", 100,
 		clingy.Transform(strconv.Atoi)).(int)
@@ -113,15 +115,94 @@ func (c *cmdDiff) executeFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objf
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
-		idx := slices.IndexFunc(pairs, func(p *fndiff.Pair) bool { return p.Name == name })
-		if idx < 0 {
-			return fmt.Errorf("function %q not found in either binary", name)
+		matches, err := matchFuncs(pairs, name)
+		if err != nil {
+			return err
 		}
-		if err := writeFunc(w, pairs[idx], old, new); err != nil {
+		if len(matches) > 1 {
+			fmt.Fprintf(w, "%q matches %d functions:\n", name, len(matches))
+			for _, p := range matches {
+				fmt.Fprintf(w, "  %-9v %+7d bytes  %s\n", p.State, p.SizeDelta(), p.Name)
+			}
+			continue
+		}
+		if err := writeFunc(w, matches[0], old, new); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// matchFuncs resolves a --fn value: an exact name wins, otherwise all
+// substring matches are returned. With no match at all the error
+// suggests the closest known names.
+func matchFuncs(pairs []*fndiff.Pair, name string) ([]*fndiff.Pair, error) {
+	var matches []*fndiff.Pair
+	for _, p := range pairs {
+		if p.Name == name {
+			return []*fndiff.Pair{p}, nil
+		}
+		if strings.Contains(p.Name, name) {
+			matches = append(matches, p)
+		}
+	}
+	if len(matches) == 0 {
+		if close := closestNames(pairs, name, 3); len(close) > 0 {
+			return nil, fmt.Errorf("function %q not found in either binary, did you mean: %s",
+				name, strings.Join(close, ", "))
+		}
+		return nil, fmt.Errorf("function %q not found in either binary", name)
+	}
+	return matches, nil
+}
+
+// closestNames returns up to n function names nearest to name by
+// Levenshtein distance, ignoring names that differ in more than half
+// their length.
+func closestNames(pairs []*fndiff.Pair, name string, n int) []string {
+	type scored struct {
+		name string
+		dist int
+	}
+	var candidates []scored
+	for _, p := range pairs {
+		if d := levenshtein(name, p.Name); d <= max(len(name), len(p.Name))/2 {
+			candidates = append(candidates, scored{p.Name, d})
+		}
+	}
+	slices.SortFunc(candidates, func(a, b scored) int {
+		if a.dist != b.dist {
+			return a.dist - b.dist
+		}
+		return cmp.Compare(a.name, b.name)
+	})
+	names := make([]string, 0, n)
+	for _, c := range candidates[:min(n, len(candidates))] {
+		names = append(names, c.name)
+	}
+	return names
+}
+
+// levenshtein returns the edit distance between a and b using a
+// two-row dynamic program.
+func levenshtein(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
 }
 
 // writeFunc reports one function pair: a note for identical, added,

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -23,6 +24,42 @@ func mkAnalysis(olds, news []string) *analysis {
 		a.newAddrs = append(a.newAddrs, uint64(0x200+4*i))
 	}
 	return a
+}
+
+func TestMatchFuncs_Resolution(t *testing.T) {
+	pairs := []*fndiff.Pair{
+		{Name: "main.sum"},
+		{Name: "main.summary"},
+		{Name: "runtime.mallocgc"},
+	}
+
+	t.Run("exact beats substring", func(t *testing.T) {
+		got, err := matchFuncs(pairs, "main.sum")
+		if err != nil || len(got) != 1 || got[0].Name != "main.sum" {
+			t.Errorf("got %v, %v; want exactly main.sum", got, err)
+		}
+	})
+
+	t.Run("unique substring resolves", func(t *testing.T) {
+		got, err := matchFuncs(pairs, "mallocgc")
+		if err != nil || len(got) != 1 || got[0].Name != "runtime.mallocgc" {
+			t.Errorf("got %v, %v; want runtime.mallocgc", got, err)
+		}
+	})
+
+	t.Run("ambiguous substring lists all", func(t *testing.T) {
+		got, err := matchFuncs(pairs, "main.su")
+		if err != nil || len(got) != 2 {
+			t.Errorf("got %v, %v; want both main.su matches", got, err)
+		}
+	})
+
+	t.Run("miss suggests closest", func(t *testing.T) {
+		_, err := matchFuncs(pairs, "main.sun")
+		if err == nil || !strings.Contains(err.Error(), "main.sum") {
+			t.Errorf("err = %v, want suggestion of main.sum", err)
+		}
+	})
 }
 
 func TestDiffLines_ResolvesAddressesPerSide(t *testing.T) {
