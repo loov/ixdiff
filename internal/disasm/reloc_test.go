@@ -49,6 +49,27 @@ func TestRelocOnly_ARM64(t *testing.T) {
 		return "", 0
 	}
 
+	// Data layout: old side has a global at 0x15000, new at 0x26000;
+	// a second global sits at 0x15100/0x26100.
+	oldData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x15000 && addr < 0x15100:
+			return "globalA", 0x15000, 0x100
+		case addr >= 0x15100 && addr < 0x15200:
+			return "globalB", 0x15100, 0x100
+		}
+		return "", 0, 0
+	}
+	newData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x26000 && addr < 0x26100:
+			return "globalA", 0x26000, 0x100
+		case addr >= 0x26100 && addr < 0x26200:
+			return "globalB", 0x26100, 0x100
+		}
+		return "", 0, 0
+	}
+
 	tests := []struct {
 		name     string
 		old, new []uint32
@@ -81,10 +102,28 @@ func TestRelocOnly_ARM64(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "adrp page and low12 differ",
-			old:  []uint32{adrp(0x100, 27), addImm(0x123, 27, 0), ret},
-			new:  []uint32{adrp(0x200, 27), addImm(0x456, 27, 0), ret},
+			// old: page 0x15000 + 0x40 = globalA+0x40; new: page
+			// 0x26000 + 0x40 = globalA+0x40. Same symbol, moved.
+			name: "adrp data ref moved with same symbol",
+			old:  []uint32{adrp(5, 27), addImm(0x40, 27, 0), ret},
+			new:  []uint32{adrp(6, 27), addImm(0x40, 27, 0), ret},
 			want: true,
+		},
+		{
+			// old resolves globalA+0x40, new globalB+0x40: a load
+			// switched to a different global is a real change.
+			name: "adrp data ref switched to different global",
+			old:  []uint32{adrp(5, 27), addImm(0x40, 27, 0), ret},
+			new:  []uint32{adrp(6, 27), addImm(0x140, 27, 0), ret},
+			want: false,
+		},
+		{
+			// Identical words, but the same numeric page resolves to
+			// different symbols per side: still a real change.
+			name: "identical adrp words different symbol",
+			old:  []uint32{adrp(5, 27), addImm(0x140, 27, 0), ret},
+			new:  []uint32{adrp(5, 27), addImm(0x140, 27, 0), ret},
+			want: false,
 		},
 		{
 			name: "add immediate differs without adrp base",
@@ -108,7 +147,7 @@ func TestRelocOnly_ARM64(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := disasm.RelocOnly(objfile.ArchARM64,
-				words(tt.old...), words(tt.new...), 0x10000, 0x20000, oldSym, newSym)
+				words(tt.old...), words(tt.new...), 0x10000, 0x20000, oldSym, newSym, oldData, newData)
 			if got != tt.want {
 				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
 			}
@@ -118,8 +157,9 @@ func TestRelocOnly_ARM64(t *testing.T) {
 
 func TestRelocOnly_AMD64AlwaysFalse(t *testing.T) {
 	code := []byte{0xc3}
-	none := func(uint64) (string, uint64) { return "", 0 }
-	if disasm.RelocOnly(objfile.ArchAMD64, code, code, 0, 0, none, none) {
+	noSym := func(uint64) (string, uint64) { return "", 0 }
+	noData := func(uint64) (string, uint64, uint64) { return "", 0, 0 }
+	if disasm.RelocOnly(objfile.ArchAMD64, code, code, 0, 0, noSym, noSym, noData, noData) {
 		t.Error("amd64 must always fall back to full analysis")
 	}
 }

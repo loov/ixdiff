@@ -54,9 +54,14 @@ func openMachO(r io.ReaderAt, data []byte) (*Binary, error) {
 			}
 			// Mach-O prefixes symbol names with an underscore.
 			name := strings.TrimPrefix(sym.Name, "_")
-			syms = append(syms, sizelessSym{name: name, addr: sym.Value})
+			if sym.Value >= text.Addr && sym.Value < text.Addr+text.Size {
+				syms = append(syms, sizelessSym{name: name, addr: sym.Value})
+			} else if sym.Value != 0 {
+				bin.addData(name, sym.Value, 0)
+			}
 		}
 		bin.addSizeless(syms)
+		bin.finishData()
 	}
 
 	if sec := mf.Section("__gopclntab"); sec != nil {

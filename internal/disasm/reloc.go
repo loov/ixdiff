@@ -2,25 +2,65 @@ package disasm
 
 import (
 	"encoding/binary"
+	"strings"
 
 	"github.com/loov/ixdiff/internal/objfile"
 )
+
+// DataLookup resolves an address to the name, base address, and size
+// of the data symbol containing it, or ("", 0, 0) when unknown. It
+// matches the signature of objfile.Binary.DataSym.
+type DataLookup func(addr uint64) (name string, base, size uint64)
+
+// bigDataSym is the size above which a data symbol is treated as an
+// aggregate blob whose internal offsets shift freely between builds;
+// offsets into such symbols are masked rather than compared.
+const bigDataSym = 4096
+
+// sectionMarkers are linker-generated section boundary symbols; data
+// resolving to them is anonymous neighboring data, not a reference to
+// the marker, so such references are always masked.
+var sectionMarkers = map[string]bool{
+	"runtime.text": true, "runtime.etext": true,
+	"runtime.rodata": true, "runtime.erodata": true,
+	"runtime.types": true, "runtime.etypes": true,
+	"runtime.data": true, "runtime.edata": true,
+	"runtime.bss": true, "runtime.ebss": true,
+	"runtime.gcdata": true, "runtime.egcdata": true,
+	"runtime.gcbss": true, "runtime.egcbss": true,
+	"runtime.noptrdata": true, "runtime.enoptrdata": true,
+	"runtime.noptrbss": true, "runtime.enoptrbss": true,
+	"runtime.covctrs": true, "runtime.ecovctrs": true,
+	"runtime.itablink": true, "runtime.eitablink": true,
+	"runtime.end": true, "runtime.zerobase": true,
+	"runtime.rathole": true,
+}
+
+// dataMasked reports whether a resolved data symbol is untrustworthy
+// for identity comparison: unresolved, an aggregate blob, a section
+// marker, or linker-generated function metadata.
+func dataMasked(name string, size uint64) bool {
+	return name == "" || size > bigDataSym ||
+		sectionMarkers[name] || strings.HasPrefix(name, "go:func")
+}
 
 // RelocOnly reports whether two equal-length function bodies differ
 // only in relocation-bearing fields, without disassembling. A true
 // result means the full normalize-and-diff pipeline would classify
 // the pair as relocation-only noise; false means unknown, and the
-// caller must fall back to full analysis. The lookups resolve branch
-// targets so a call retargeted to a different function is never
-// mistaken for relocation.
+// caller must fall back to full analysis. The sym lookups resolve
+// branch targets and the data lookups resolve ADRP-based data
+// references, so a call or load retargeted to a different symbol is
+// never mistaken for relocation.
 //
 // Only arm64 is recognized: fixed-width words make the relocation
 // fields cheap to locate. On amd64 it always returns false.
-func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint64, oldSym, newSym SymLookup) bool {
+func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint64,
+	oldSym, newSym SymLookup, oldData, newData DataLookup) bool {
 	if arch != objfile.ArchARM64 || len(oldCode) != len(newCode) {
 		return false
 	}
-	return relocOnlyARM64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym)
+	return relocOnlyARM64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
 }
 
 // arm64 instruction encodings, per the ARM ARM. Register numbers
@@ -31,7 +71,15 @@ const (
 	armBL      = 0x94000000 // BL imm26
 	armADRMask = 0x9F000000
 	armADRP    = 0x90000000 // ADRP immlo:30-29 immhi:23-5
-	armImm12   = 0xFFF << 10
+	// ADD (immediate, 64-bit, no flags, no shift): imm12 in 21:10.
+	armAddMask = 0xFFC00000
+	armAdd     = 0x91000000
+	// Load/store register, unsigned immediate: imm12 in 21:10,
+	// scaled by size (bits 31:30); bit 26 set means SIMD.
+	armLdStMask = 0x3B000000
+	armLdSt     = 0x39000000
+	armSIMD     = 1 << 26
+	armImm12    = 0xFFF << 10
 )
 
 // relocOnlyARM64 walks both bodies word by word. Differing words are
@@ -42,31 +90,48 @@ const (
 //     both sides (an intra-function branch that changed is real) and
 //     both sides resolve to the same symbol at the same offset
 //   - the ADRP page immediate
-//   - a 12-bit immediate whose base register was set by an ADRP (the
-//     low bits of a relocated data address)
+//   - the 12-bit immediate of an ADD or load/store based on an ADRP
+//     register, when the combined address resolves to the same data
+//     symbol and offset on both sides
 //
-// Anything else fails, leaving the decision to full analysis.
-func relocOnlyARM64(oldCode, newCode []byte, oldAddr, newAddr uint64, oldSym, newSym SymLookup) bool {
-	// adrp tracks which registers currently hold an ADRP page
-	// address, by register number.
-	var adrp uint32
+// Anything else — including any other use of an ADRP-based register,
+// whose address semantics this fast path cannot follow — fails,
+// leaving the decision to full analysis.
+func relocOnlyARM64(oldCode, newCode []byte, oldAddr, newAddr uint64,
+	oldSym, newSym SymLookup, oldData, newData DataLookup) bool {
+	// tracked marks registers holding an ADRP page address; oldPage
+	// and newPage hold that page per side.
+	var tracked uint32
+	var oldPage, newPage [32]uint64
 
 	n := len(oldCode) &^ 3
 	for i := 0; i < n; i += 4 {
 		o := binary.LittleEndian.Uint32(oldCode[i:])
 		w := binary.LittleEndian.Uint32(newCode[i:])
+		rn := o >> 5 & 0x1F
 
 		switch {
-		case o == w:
-			// Identical; fall through to register tracking.
+		case o&armADRMask == armADRP && w&armADRMask == armADRP && o&0x1F == w&0x1F:
+			rd := o & 0x1F
+			oldPage[rd] = adrpTarget(o, oldAddr+uint64(i))
+			newPage[rd] = adrpTarget(w, newAddr+uint64(i))
+			tracked |= 1 << rd
+			continue
+
+		case o == w && tracked&(1<<rn) == 0:
+			// Identical and independent of any page register.
 
 		case o&armBMask == armB && w&armBMask == armB,
 			o&armBMask == armBL && w&armBMask == armBL:
 			oldTarget := branchTarget(o, oldAddr, uint64(i))
 			newTarget := branchTarget(w, newAddr, uint64(i))
-			if within(oldTarget, oldAddr, uint64(len(oldCode))) ||
-				within(newTarget, newAddr, uint64(len(oldCode))) {
-				return false // retargeted intra-function branch
+			intraOld := within(oldTarget, oldAddr, uint64(len(oldCode)))
+			intraNew := within(newTarget, newAddr, uint64(len(oldCode)))
+			if intraOld || intraNew {
+				if o != w || !intraOld || !intraNew {
+					return false // retargeted intra-function branch
+				}
+				break
 			}
 			oldName, oldBase := oldSym(oldTarget)
 			newName, newBase := newSym(newTarget)
@@ -75,27 +140,31 @@ func relocOnlyARM64(oldCode, newCode []byte, oldAddr, newAddr uint64, oldSym, ne
 				return false // different callee
 			}
 
-		case o&armADRMask == armADRP && w&armADRMask == armADRP &&
-			o&0x1F == w&0x1F:
-			// Page immediate differs; register updated below.
+		case o&^armImm12 == w&^armImm12 && tracked&(1<<rn) != 0 &&
+			o&armAddMask == armAdd && w&armAddMask == armAdd:
+			if !sameData(oldPage[rn]+uint64(o>>10&0xFFF), newPage[rn]+uint64(w>>10&0xFFF),
+				oldData, newData) {
+				return false
+			}
 
-		case o&^armImm12 == w&^armImm12 && adrp&(1<<(o>>5&0x1F)) != 0:
-			// Same instruction and registers, only a 12-bit
-			// immediate differs, and the base register holds an
-			// ADRP page address: the low bits of a moved address.
+		case o&^armImm12 == w&^armImm12 && tracked&(1<<rn) != 0 &&
+			o&armLdStMask == armLdSt && o&armSIMD == 0:
+			scale := o >> 30
+			if !sameData(oldPage[rn]+uint64(o>>10&0xFFF)<<scale, newPage[rn]+uint64(w>>10&0xFFF)<<scale,
+				oldData, newData) {
+				return false
+			}
 
 		default:
+			// Real change, or an ADRP-based access this fast path
+			// cannot resolve.
 			return false
 		}
 
-		if o&armADRMask == armADRP && o == w || o&armADRMask == armADRP && w&armADRMask == armADRP {
-			adrp |= 1 << (o & 0x1F)
-		} else {
-			// Any other instruction naming the register in its
-			// destination field invalidates it. Stores name a
-			// source there; over-clearing only costs precision.
-			adrp &^= 1 << (o & 0x1F)
-		}
+		// Any non-ADRP instruction naming a page register in its
+		// destination field invalidates it. Stores name a source
+		// there; over-clearing only costs precision.
+		tracked &^= 1 << (o & 0x1F)
 	}
 	// A trailing partial word must match exactly.
 	for i := n; i < len(oldCode); i++ {
@@ -104,6 +173,31 @@ func relocOnlyARM64(oldCode, newCode []byte, oldAddr, newAddr uint64, oldSym, ne
 		}
 	}
 	return true
+}
+
+// sameData reports whether two addresses render identically under the
+// full path's data-reference rules: resolution is trusted only into
+// small, precisely-sized, non-marker symbols, where name and offset
+// must match; everything else is masked on both sides and therefore
+// matches only if both sides are masked.
+func sameData(oldAddr, newAddr uint64, oldData, newData DataLookup) bool {
+	oldName, oldBase, oldSize := oldData(oldAddr)
+	newName, newBase, newSize := newData(newAddr)
+	oldMasked := dataMasked(oldName, oldSize)
+	newMasked := dataMasked(newName, newSize)
+	if oldMasked || newMasked {
+		return oldMasked == newMasked
+	}
+	return maskGenNumber(oldName) == maskGenNumber(newName) &&
+		oldAddr-oldBase == newAddr-newBase
+}
+
+// adrpTarget computes the page address produced by an ADRP word at pc.
+func adrpTarget(word uint32, pc uint64) uint64 {
+	immlo := word >> 29 & 3
+	immhi := word >> 5 & 0x7FFFF
+	imm := int64(int32(immhi<<13|immlo<<11)) >> 11 // sign-extend 21 bits
+	return pc&^0xFFF + uint64(imm)<<12
 }
 
 // branchTarget computes the absolute target of the B/BL word at

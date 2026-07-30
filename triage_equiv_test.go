@@ -48,7 +48,7 @@ func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) {
 			continue
 		}
 		if !disasm.RelocOnly(old.Arch, p.Old.Code(), p.New.Code(),
-			p.Old.Addr, p.New.Addr, oldLookup, newLookup) {
+			p.Old.Addr, p.New.Addr, oldLookup, newLookup, old.DataSym, new.DataSym) {
 			continue
 		}
 		fast++
@@ -62,8 +62,8 @@ func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) {
 			t.Fatalf("Decode new %s: %v", p.Name, err)
 		}
 		oldLines, newLines := alignLabels(
-			disasm.NormalizeLines(p.Old.Name, oldInsts, disasm.Options{IsAddr: old.Contains}),
-			disasm.NormalizeLines(p.New.Name, newInsts, disasm.Options{IsAddr: new.Contains}))
+			disasm.NormalizeLines(p.Old.Name, oldInsts, disasm.Options{IsAddr: old.Contains, DataSym: old.DataSym}),
+			disasm.NormalizeLines(p.New.Name, newInsts, disasm.Options{IsAddr: new.Contains, DataSym: new.DataSym}))
 		if !slices.Equal(oldLines, newLines) {
 			contradictions++
 			for i := range oldLines {

@@ -1,6 +1,7 @@
 package disasm_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -128,6 +129,37 @@ func TestNormalize_MaskSP(t *testing.T) {
 		if plain[i] != in.Text {
 			t.Errorf("MaskSP off rewrote %q to %q", in.Text, plain[i])
 		}
+	}
+}
+
+// TestNormalize_ResolvesDataSymbols checks against real binaries that
+// data references render as symbol+offset on both architectures: the
+// amd64 IP-relative form and the arm64 ADRP+low12 pair (which also
+// validates the ADRP page computation against GoSyntax output).
+func TestNormalize_ResolvesDataSymbols(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			bin, err := objfile.Open(testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch}))
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			fn := bin.Funcs["main.main"]
+			if fn == nil {
+				t.Fatal("main.main not found")
+			}
+			insts, err := disasm.Decode(bin.Arch, fn.Code(), fn.Addr, disasm.Lookup(bin))
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			lines := disasm.Normalize(fn.Name, insts,
+				disasm.Options{IsAddr: bin.Contains, DataSym: bin.DataSym})
+			joined := strings.Join(lines, "\n")
+			// main.main reads len(os.Args): the slice length lives 8
+			// bytes past the os.Args base.
+			if !strings.Contains(joined, "os.Args+8") {
+				t.Errorf("expected os.Args+8 data reference in main.main:\n%s", joined)
+			}
+		})
 	}
 }
 

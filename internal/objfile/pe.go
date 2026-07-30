@@ -66,15 +66,19 @@ func openPE(r io.ReaderAt, data []byte) (*Binary, error) {
 	}
 	var syms []sizelessSym
 	for _, sym := range pf.Symbols {
-		if int(sym.SectionNumber) != textIndex {
+		if int(sym.SectionNumber) <= 0 || int(sym.SectionNumber) > len(pf.Sections) {
 			continue
 		}
-		syms = append(syms, sizelessSym{
-			name: sym.Name,
-			addr: imageBase + uint64(text.VirtualAddress) + uint64(sym.Value),
-		})
+		sec := pf.Sections[sym.SectionNumber-1]
+		addr := imageBase + uint64(sec.VirtualAddress) + uint64(sym.Value)
+		if int(sym.SectionNumber) == textIndex {
+			syms = append(syms, sizelessSym{name: sym.Name, addr: addr})
+		} else {
+			bin.addData(sym.Name, addr, 0)
+		}
 	}
 	bin.addSizeless(syms)
+	bin.finishData()
 
 	// PE has no pclntab section; scan the data sections for its header.
 	for _, name := range []string{".rdata", ".data"} {

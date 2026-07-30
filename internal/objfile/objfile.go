@@ -45,6 +45,9 @@ type Binary struct {
 	// binary's loadable sections, used to recognize address-valued
 	// immediates.
 	ranges [][2]uint64
+	// dataSyms are the non-function symbols, sorted by address, used
+	// to resolve data references to names.
+	dataSyms []dataSym
 
 	// text is the executable text section, a slice into the mapping,
 	// starting at virtual address textAddr.
@@ -202,11 +205,16 @@ func openELF(r io.ReaderAt, data []byte) (*Binary, error) {
 		return nil, fmt.Errorf("reading symbols: %w", err)
 	}
 	for _, sym := range syms {
-		if elf.ST_TYPE(sym.Info) != elf.STT_FUNC || sym.Size == 0 {
-			continue
+		switch elf.ST_TYPE(sym.Info) {
+		case elf.STT_FUNC:
+			if sym.Size != 0 {
+				bin.addFunc(sym.Name, sym.Value, sym.Size)
+			}
+		case elf.STT_OBJECT:
+			bin.addData(sym.Name, sym.Value, sym.Size)
 		}
-		bin.addFunc(sym.Name, sym.Value, sym.Size)
 	}
+	bin.finishData()
 
 	// ponytail: externally linked Go binaries store the pclntab in
 	// .data.rel.ro without its own section; add a findPclntab scan
@@ -228,6 +236,56 @@ func (b *Binary) Contains(addr uint64) bool {
 		}
 	}
 	return false
+}
+
+// dataSym is a non-function symbol. A zero size means the symbol
+// extends to the next data symbol.
+type dataSym struct {
+	name string
+	addr uint64
+	size uint64
+}
+
+// addData records a data symbol.
+func (b *Binary) addData(name string, addr, size uint64) {
+	b.dataSyms = append(b.dataSyms, dataSym{name: name, addr: addr, size: size})
+}
+
+// finishData sorts the data symbols for lookup; call once after all
+// addData calls.
+func (b *Binary) finishData() {
+	slices.SortFunc(b.dataSyms, func(x, y dataSym) int {
+		return cmp.Compare(x.addr, y.addr)
+	})
+}
+
+// DataSym resolves an address to the name, base address, and size of
+// the data symbol containing it, or ("", 0, 0) when unknown. Symbols
+// without a recorded size extend to the next data symbol.
+func (b *Binary) DataSym(addr uint64) (name string, base, size uint64) {
+	i, _ := slices.BinarySearchFunc(b.dataSyms, addr, func(s dataSym, a uint64) int {
+		return cmp.Compare(s.addr, a)
+	})
+	// i is the first symbol at or after addr; the containing one is
+	// at i-1 unless addr hits a symbol start exactly.
+	if i >= len(b.dataSyms) || b.dataSyms[i].addr != addr {
+		if i == 0 {
+			return "", 0, 0
+		}
+		i--
+	}
+	s := b.dataSyms[i]
+	end := s.addr + s.size
+	if s.size == 0 {
+		end = ^uint64(0)
+		if i+1 < len(b.dataSyms) {
+			end = b.dataSyms[i+1].addr
+		}
+	}
+	if addr >= end {
+		return "", 0, 0
+	}
+	return s.name, s.addr, end - s.addr
 }
 
 // addRange records a loadable section's virtual address range.

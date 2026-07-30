@@ -45,7 +45,7 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 		g.Go(func() error {
 			if p.State == fndiff.StateChanged &&
 				disasm.RelocOnly(old.Arch, p.Old.Code(), p.New.Code(),
-					p.Old.Addr, p.New.Addr, oldLookup, newLookup) {
+					p.Old.Addr, p.New.Addr, oldLookup, newLookup, old.DataSym, new.DataSym) {
 				// Provably relocation-only: skip disassembly.
 				results[i] = &analysis{pair: p, noise: true}
 				return nil
@@ -74,6 +74,7 @@ func analyze(pairs []*fndiff.Pair, old, new *objfile.Binary, limit int, opts dis
 			if p.State == fndiff.StateChanged {
 				oldOpts, newOpts := opts, opts
 				oldOpts.IsAddr, newOpts.IsAddr = old.Contains, new.Contains
+				oldOpts.DataSym, newOpts.DataSym = old.DataSym, new.DataSym
 				oldLines, newLines := alignLabels(
 					disasm.NormalizeLines(p.Old.Name, oldInsts, oldOpts),
 					disasm.NormalizeLines(p.New.Name, newInsts, newOpts))
@@ -116,6 +117,7 @@ func bodySimilar(old, new *objfile.Binary, opts disasm.Options) func(oldF, newF 
 		}
 		oldOpts, newOpts := opts, opts
 		oldOpts.IsAddr, newOpts.IsAddr = old.Contains, new.Contains
+		oldOpts.DataSym, newOpts.DataSym = old.DataSym, new.DataSym
 		// Each side normalizes under its own symbol name so
 		// self-referencing branches become labels on both sides and a
 		// pure rename compares equal.
@@ -145,6 +147,7 @@ func listing(p *fndiff.Pair, old, new *objfile.Binary, opts disasm.Options) (*an
 		return nil, fmt.Errorf("disassembling %s: %w", p.Name, err)
 	}
 	opts.IsAddr = bin.Contains
+	opts.DataSym = bin.DataSym
 	a := &analysis{pair: p}
 	for _, text := range disasm.Normalize(fn.Name, insts, opts) {
 		a.edits = append(a.edits, fndiff.Edit{Op: op, Text: text})
