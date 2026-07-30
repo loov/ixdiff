@@ -92,8 +92,8 @@ func writeSummary(w io.Writer, pairs []*fndiff.Pair, changed []*analysis, top in
 		totalOps.Add(a.opDelta)
 	}
 
-	fmt.Fprintf(w, "functions: %d identical, %d changed (%d relocation-only), %d added, %d removed\n",
-		counts[fndiff.StateIdentical], counts[fndiff.StateChanged], noise,
+	fmt.Fprintf(w, "functions: %d identical, %d changed (+%d relocations), %d added, %d removed\n",
+		counts[fndiff.StateIdentical], counts[fndiff.StateChanged]-noise, noise,
 		counts[fndiff.StateAdded], counts[fndiff.StateRemoved])
 	fmt.Fprintf(w, "total text size delta: %+d bytes\n", sizeDelta)
 
