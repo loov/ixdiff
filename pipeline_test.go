@@ -70,6 +70,13 @@ func TestPipeline_SingleFunctionDiff(t *testing.T) {
 	if !strings.Contains(out, "+CALL main.sum(SB)") {
 		t.Errorf("expected inserted CALL main.sum:\n%s", out)
 	}
+
+	// Repeated --fn reports each function in the order given.
+	out = run(t, "--fn", "main.main", "--fn", "main.sum", base, noinline)
+	main, sum := strings.Index(out, "--- main.main"), strings.Index(out, "main.sum is")
+	if main < 0 || sum < 0 || sum < main {
+		t.Errorf("expected main.main diff followed by main.sum report:\n%s", out)
+	}
 }
 
 func TestPipeline_MissingFunctionErrors(t *testing.T) {

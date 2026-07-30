@@ -45,7 +45,7 @@ func main() {
 
 // cmdDiff compares two binaries and reports their assembly differences.
 type cmdDiff struct {
-	fn     string
+	fns    []string
 	top    int
 	sortBy string
 
@@ -55,7 +55,8 @@ type cmdDiff struct {
 
 // Setup declares the flags and arguments for the diff command.
 func (c *cmdDiff) Setup(params clingy.Parameters) {
-	c.fn = params.Flag("fn", "show the assembly diff of a single function", "").(string)
+	c.fns = params.Flag("fn", "show the assembly diff of a function (repeatable)", []string(nil),
+		clingy.Repeated).([]string)
 	c.top = params.Flag("top", "number of functions to list in ranking tables", 100,
 		clingy.Transform(strconv.Atoi)).(int)
 	c.sortBy = params.Flag("sort", "ranking order for tables: size or insts", "size").(string)
@@ -87,8 +88,8 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	pairs := fndiff.Compare(old, new)
 	stdout := clingy.Stdout(ctx)
 
-	if c.fn != "" {
-		return c.executeFunc(stdout, pairs, old, new)
+	if len(c.fns) > 0 {
+		return c.executeFuncs(stdout, pairs, old, new)
 	}
 
 	var changedPairs []*fndiff.Pair
@@ -105,14 +106,27 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	return nil
 }
 
-// executeFunc reports the assembly diff of the single function named
-// by --fn.
-func (c *cmdDiff) executeFunc(w io.Writer, pairs []*fndiff.Pair, old, new *objfile.Binary) error {
-	i := slices.IndexFunc(pairs, func(p *fndiff.Pair) bool { return p.Name == c.fn })
-	if i < 0 {
-		return fmt.Errorf("function %q not found in either binary", c.fn)
+// executeFuncs reports the assembly diff of every function named by a
+// --fn flag, in the order given, separated by blank lines.
+func (c *cmdDiff) executeFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objfile.Binary) error {
+	for i, name := range c.fns {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		idx := slices.IndexFunc(pairs, func(p *fndiff.Pair) bool { return p.Name == name })
+		if idx < 0 {
+			return fmt.Errorf("function %q not found in either binary", name)
+		}
+		if err := writeFunc(w, pairs[idx], old, new); err != nil {
+			return err
+		}
 	}
-	p := pairs[i]
+	return nil
+}
+
+// writeFunc reports one function pair: a note for identical, added,
+// and removed functions, a full assembly diff for changed ones.
+func writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary) error {
 	switch p.State {
 	case fndiff.StateIdentical:
 		fmt.Fprintf(w, "%s is byte-identical in both binaries\n", p.Name)
