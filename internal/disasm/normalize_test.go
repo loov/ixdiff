@@ -156,9 +156,37 @@ func TestNormalize_ARMOperands(t *testing.T) {
 	}
 }
 
-// TestNormalize_LabelsStableUnderInsertion checks that inserting an
-// instruction that is not a branch target does not renumber labels:
-// numbering follows target order, not instruction index.
+// TestNormalize_386Operands covers the 386 forms of address operands.
+// 386 has no IP-relative addressing: globals are reached through
+// absolute address immediates and absolute memory operands, both of
+// which shift whenever data moves and are masked, while plain
+// constants and branches keep the shared x86 treatment. The operand
+// texts are real x86asm GoSyntax mode-32 renderings.
+func TestNormalize_386Operands(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x1000, Len: 5, Op: "MOV", Text: "MOVL $0x4a2c40, AX"},
+		{Addr: 0x1005, Len: 5, Op: "MOV", Text: "MOVL $0x1, DI"},
+		{Addr: 0x100a, Len: 5, Op: "MOV", Text: "MOVL 0x4a2c40, AX"},
+		{Addr: 0x100f, Len: 6, Op: "LEA", Text: "LEAL 0x4a2c40, AX"},
+		{Addr: 0x1015, Len: 2, Op: "JBE", Text: "JBE 0x1018"},
+		{Addr: 0x1017, Len: 1, Op: "NOP", Text: "NOPL"},
+		{Addr: 0x1018, Len: 1, Op: "RET", Text: "RET"},
+	}
+	isAddr := func(v uint64) bool { return v >= 0x400000 && v < 0x500000 }
+	want := []string{
+		"MOVL $<addr>, AX", // address immediate masked via IsAddr
+		"MOVL $0x1, DI",    // plain constant kept
+		"MOVL <addr>, AX",  // absolute memory operand masked
+		"LEAL <addr>, AX",  // absolute address materialization masked
+		"JBE L1",           // branch -> label of RET
+		"NOPL",
+		"RET",
+	}
+	got := disasm.Normalize("main.f", insts, disasm.Options{IsAddr: isAddr})
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
 
 // TestNormalize_LabelsStableUnderInsertion checks that inserting an
 // instruction that is not a branch target does not renumber labels:
@@ -267,6 +295,9 @@ func TestNormalize_MaskSP(t *testing.T) {
 func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 	// main.main reads len(os.Args): the slice length lives one pointer
 	// past the os.Args base.
+	// 386 is absent deliberately: its os.Args read is an absolute
+	// memory operand (MOVL 0x81b1b4c, CX), which normalize masks as
+	// <addr> without consulting DataSym; see TestNormalize_386Operands.
 	tests := []struct {
 		arch string
 		want string
@@ -311,6 +342,7 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
 	for _, cfg := range []testbin.Config{
 		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "linux", GOARCH: "386"},
 		{GOOS: "linux", GOARCH: "arm64"},
 		{GOOS: "linux", GOARCH: "arm"},
 		{GOOS: "linux", GOARCH: "riscv64"},
