@@ -38,9 +38,9 @@ func TestMatchRenames_PairsByCanonicalNameAndSimilarity(t *testing.T) {
 		return p
 	}
 	pairs := []*Pair{
-		mk("main.f.func2", StateAdded),   // canonical match with .func1
+		mk("main.f.func2", StateAdded), // canonical match with .func1
 		mk("main.f.func1", StateRemoved),
-		mk("main.newName", StateAdded),   // similarity match
+		mk("main.newName", StateAdded), // similarity match
 		mk("main.oldName", StateRemoved),
 		mk("main.reallyGone", StateRemoved), // stays removed
 		{Name: "main.same", State: StateIdentical},

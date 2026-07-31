@@ -37,6 +37,56 @@ func TestRelocOnly_NeverContradictsFullAnalysis(t *testing.T) {
 	}
 }
 
+// TestWasm_PadShiftIsPureNoise verifies wasm normalization over the
+// whole binary: a padding function shifts every function index, type
+// index, PC constant, and data offset, so every byte-changed pair must
+// normalize back to identical lines. Any pair that does not means an
+// unstable operand kind leaked through.
+func TestWasm_PadShiftIsPureNoise(t *testing.T) {
+	old, err := objfile.Open(testbin.Build(t, testbin.Config{GOOS: "wasip1", GOARCH: "wasm"}))
+	if err != nil {
+		t.Fatalf("Open base: %v", err)
+	}
+	new, err := objfile.Open(testbin.Build(t, testbin.Config{GOOS: "wasip1", GOARCH: "wasm", Tags: "pad"}))
+	if err != nil {
+		t.Fatalf("Open pad: %v", err)
+	}
+	oldLookup, newLookup := disasm.Lookup(old), disasm.Lookup(new)
+	changed, noisy := 0, 0
+	for _, p := range fndiff.Compare(old, new) {
+		if p.State != fndiff.StateChanged {
+			continue
+		}
+		changed++
+		oldInsts, err := disasm.Decode(old.Arch, p.Old.Code(), p.Old.Addr, oldLookup)
+		if err != nil {
+			t.Fatalf("Decode old %s: %v", p.Name, err)
+		}
+		newInsts, err := disasm.Decode(new.Arch, p.New.Code(), p.New.Addr, newLookup)
+		if err != nil {
+			t.Fatalf("Decode new %s: %v", p.Name, err)
+		}
+		oldLines, newLines := alignLabels(
+			disasm.NormalizeLines(p.Old.Name, oldInsts, disasm.Options{IsAddr: old.Contains}),
+			disasm.NormalizeLines(p.New.Name, newInsts, disasm.Options{IsAddr: new.Contains}))
+		if slices.Equal(oldLines, newLines) {
+			noisy++
+			continue
+		}
+		for i := range oldLines {
+			if oldLines[i] != newLines[i] {
+				t.Errorf("%s: normalized lines differ at %d:\n  old %q\n  new %q",
+					p.Name, i, oldLines[i], newLines[i])
+				break
+			}
+		}
+	}
+	if changed == 0 {
+		t.Fatal("padding did not change any pair, test would be vacuous")
+	}
+	t.Logf("%d changed pairs, %d pure noise", changed, noisy)
+}
+
 // checkTriageEquivalence verifies the property over every changed pair
 // of two binaries and reports how often the fast path fired.
 func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) {

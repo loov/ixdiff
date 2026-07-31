@@ -28,6 +28,7 @@ const (
 	ArchRISCV64
 	ArchLoong64
 	ArchARM
+	ArchWasm
 )
 
 // String returns the Go name of the architecture.
@@ -51,6 +52,8 @@ func (a Arch) String() string {
 		return "loong64"
 	case ArchARM:
 		return "arm"
+	case ArchWasm:
+		return "wasm"
 	default:
 		return "unknown"
 	}
@@ -76,6 +79,10 @@ type Binary struct {
 	text     []byte
 	textAddr uint64
 
+	// wasmNames maps the wasm function index space (imports first,
+	// then defined functions) to names; nil for non-wasm binaries.
+	wasmNames []string
+
 	// closeMapping releases the file mapping.
 	closeMapping func() error
 }
@@ -93,16 +100,23 @@ func (b *Binary) Close() error {
 // Func is a single function inside a binary.
 type Func struct {
 	Name string
-	Addr uint64 // virtual address of the first instruction
+	Addr uint64 // virtual address of the first instruction; wasm: function index
 	Size uint64 // size of the function body in bytes
+
+	// code is the function body for formats whose text is not
+	// address-sliced (wasm); nil otherwise.
+	code []byte
 
 	bin *Binary
 }
 
 // Code returns the machine code of the function. The returned slice
-// aliases the binary's text section and must not be modified. It
+// aliases the binary's file mapping and must not be modified. It
 // returns nil when the function lies outside the text section.
 func (f *Func) Code() []byte {
+	if f.code != nil {
+		return f.code
+	}
 	b := f.bin
 	if f.Addr < b.textAddr || f.Addr+f.Size > b.textAddr+uint64(len(b.text)) {
 		return nil
@@ -112,8 +126,8 @@ func (f *Func) Code() []byte {
 }
 
 // Open maps the binary at path and parses it. It detects the file
-// format from its magic bytes; currently ELF, Mach-O, and PE are
-// recognized.
+// format from its magic bytes; currently ELF, Mach-O, PE, and wasm
+// are recognized.
 func Open(path string) (*Binary, error) {
 	data, closeMapping, err := mmapFile(path)
 	if err != nil {
@@ -142,6 +156,8 @@ func parse(data []byte) (*Binary, error) {
 		return openMachO(r, data)
 	case magic[0] == 'M' && magic[1] == 'Z':
 		return openPE(r, data)
+	case magic == "\x00asm":
+		return openWasm(data)
 	default:
 		return nil, fmt.Errorf("unsupported binary format")
 	}
@@ -345,6 +361,17 @@ func (b *Binary) DataSym(addr uint64) (name string, base, size uint64) {
 		return "", 0, 0
 	}
 	return s.name, s.addr, end - s.addr
+}
+
+// WasmName returns the name of the wasm function with the given index
+// in the module's function index space (imports first, then defined
+// functions). ok is false for non-wasm binaries and out-of-range
+// indices.
+func (b *Binary) WasmName(index uint64) (name string, ok bool) {
+	if index >= uint64(len(b.wasmNames)) {
+		return "", false
+	}
+	return b.wasmNames[index], true
 }
 
 // addRange records a loadable section's virtual address range.

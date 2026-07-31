@@ -9,4 +9,7 @@ require (
 	golang.org/x/sync v0.22.0
 )
 
-require github.com/zeebo/errs/v2 v2.0.5 // indirect
+require (
+	github.com/eliben/watgo v0.8.0 // indirect
+	github.com/zeebo/errs/v2 v2.0.5 // indirect
+)

@@ -36,6 +36,9 @@ type SymLookup func(addr uint64) (name string, base uint64)
 // Bytes that fail to decode become BYTE pseudo-instructions so that
 // padding or data inside a function does not abort decoding.
 // A nil lookup renders raw addresses.
+//
+// For wasm, code is one function body from the code section, addr is
+// ignored, and lookup resolves function indices instead of addresses.
 func Decode(arch objfile.Arch, code []byte, addr uint64, lookup SymLookup) ([]Inst, error) {
 	if lookup == nil {
 		lookup = func(uint64) (string, uint64) { return "", 0 }
@@ -59,6 +62,8 @@ func Decode(arch objfile.Arch, code []byte, addr uint64, lookup SymLookup) ([]In
 		return decodeRISCV64(code, addr, lookup), nil
 	case objfile.ArchLoong64:
 		return decodeLoong64(code, addr, lookup), nil
+	case objfile.ArchWasm:
+		return decodeWasm(code, lookup)
 	default:
 		return nil, fmt.Errorf("unsupported architecture %v", arch)
 	}

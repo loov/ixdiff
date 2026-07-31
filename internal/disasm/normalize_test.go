@@ -309,10 +309,22 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 // with different ldflags shifts symbol addresses without changing
 // function bodies.
 func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "arm", "riscv64", "loong64", "s390x", "ppc64", "ppc64le"} {
-		t.Run(arch, func(t *testing.T) {
-			pathA := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch})
-			pathB := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch, Tags: "pad"})
+	for _, cfg := range []testbin.Config{
+		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "linux", GOARCH: "arm64"},
+		{GOOS: "linux", GOARCH: "arm"},
+		{GOOS: "linux", GOARCH: "riscv64"},
+		{GOOS: "linux", GOARCH: "loong64"},
+		{GOOS: "linux", GOARCH: "s390x"},
+		{GOOS: "linux", GOARCH: "ppc64"},
+		{GOOS: "linux", GOARCH: "ppc64le"},
+		{GOOS: "wasip1", GOARCH: "wasm"},
+	} {
+		t.Run(cfg.GOARCH, func(t *testing.T) {
+			padded := cfg
+			padded.Tags = "pad"
+			pathA := testbin.Build(t, cfg)
+			pathB := testbin.Build(t, padded)
 
 			binA, err := objfile.Open(pathA)
 			if err != nil {

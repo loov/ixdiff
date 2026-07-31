@@ -11,8 +11,18 @@ import (
 )
 
 // Lookup returns a SymLookup over the functions of bin, for resolving
-// call targets to names during decoding.
+// call targets to names during decoding. For wasm binaries the lookup
+// maps function indices rather than addresses, matching the call
+// immediates of wasm code.
 func Lookup(bin *objfile.Binary) SymLookup {
+	if bin.Arch == objfile.ArchWasm {
+		return func(index uint64) (string, uint64) {
+			if name, ok := bin.WasmName(index); ok {
+				return name, index
+			}
+			return "", 0
+		}
+	}
 	funcs := make([]*objfile.Func, 0, len(bin.Funcs))
 	for _, fn := range bin.Funcs {
 		funcs = append(funcs, fn)
@@ -94,6 +104,10 @@ func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 
 	lines := make([]Line, len(insts))
 	for i, in := range insts {
+		if text, ok := wasmNorm(in, n.opts); ok {
+			lines[i] = Line{Text: text, Target: -1}
+			continue
+		}
 		op, rest, hasArgs := strings.Cut(in.Text, " ")
 		if !hasArgs {
 			lines[i] = Line{Text: in.Text, Target: -1}
@@ -218,6 +232,38 @@ var (
 	// decimal on arm64 (-112(RSP)) and riscv64 (16(X2)).
 	spDisp = regexp.MustCompile(`^(?:-?(?:0x[0-9a-f]+|\d+))?\((SP|RSP|X2)\)$`)
 )
+
+// wasmTypeIdx matches a WAT type-index immediate, as printed for
+// call_indirect and typed blocks.
+var wasmTypeIdx = regexp.MustCompile(`\(type \d+\)`)
+
+// wasmNorm applies the wasm normalization rules to one instruction,
+// reporting whether one applied. Wasm branches are relative depths and
+// call targets are symbolized at decode time, so only two operand
+// kinds shift between builds without semantic change:
+//
+//   - i32.const/i64.const immediates recognized as addresses in the
+//     module's data become <addr>: data layout shifts freely
+//   - type-index immediates become (type <t>): the type section is
+//     renumbered whenever an unrelated signature is added
+//
+// The mnemonics and the "(type N)" form never occur in x86 or arm64
+// renderings, so the rules key on them directly.
+func wasmNorm(in Inst, opts Options) (string, bool) {
+	if in.Op == "i32.const" || in.Op == "i64.const" {
+		arg := strings.TrimPrefix(in.Text, in.Op+" ")
+		if opts.IsAddr != nil {
+			if v, err := strconv.ParseUint(arg, 10, 64); err == nil && opts.IsAddr(v) {
+				return in.Op + " <addr>", true
+			}
+		}
+		return "", false
+	}
+	if strings.Contains(in.Text, "(type ") {
+		return wasmTypeIdx.ReplaceAllString(in.Text, "(type <t>)"), true
+	}
+	return "", false
+}
 
 // arg rewrites a single operand according to the Normalize rules;
 // operands it does not recognize pass through unchanged. adrp maps
