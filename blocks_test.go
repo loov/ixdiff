@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/loov/ixdiff/internal/disasm"
 )
 
 func mkBlock(addr uint64, lines ...string) block {
@@ -28,6 +30,31 @@ func TestSplitBlocks_CutsAtLeadersAndTransfers(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got, cmp.AllowUnexported(block{})); diff != "" {
 		t.Errorf("splitBlocks mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestBlockEnds_UsesRenderedMnemonic checks that terminators are
+// recognized by the rendered text, not the raw decoder Op: riscv64
+// returns decode as JALR but render as RET, and wasm ops are lowercase.
+func TestBlockEnds_UsesRenderedMnemonic(t *testing.T) {
+	nl := []disasm.Line{
+		{Text: "ADD X10, X11", Target: -1},
+		{Text: "BEQ X10, X0, \x01", Target: 3}, // conditional with label target
+		{Text: "RET", Target: -1},              // riscv64 return, raw Op JALR
+		{Text: "i32.const 1", Target: -1},
+		{Text: "return", Target: -1}, // wasm return
+	}
+	insts := []disasm.Inst{
+		{Op: "ADD", Text: "ADD X10, X11"},
+		{Op: "BEQ", Text: "BEQ X10, X0, 2(PC)"},
+		{Op: "JALR", Text: "RET"},
+		{Op: "i32.const", Text: "i32.const 1"},
+		{Op: "return", Text: "return"},
+	}
+	got := blockEnds(nl, insts)
+	want := map[int]bool{1: true, 2: true, 4: true}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("blockEnds mismatch (-want +got):\n%s", diff)
 	}
 }
 

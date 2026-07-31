@@ -21,11 +21,23 @@ type block struct {
 // content returns the block's comparison key.
 func (b block) content() string { return strings.Join(b.lines, "\n") }
 
-// unconditional lists the mnemonics after which control never falls
-// through, ending a block.
+// unconditional lists the rendered mnemonics after which control never
+// falls through, ending a block. It keys on the first word of the
+// rendered text rather than the raw decoder Op, because GoSyntax
+// normalizes returns and jumps to the same Go assembler names on every
+// architecture (riscv64's raw Op is JAL/JALR for calls, jumps, and
+// returns alike; arm's return is a raw LDR into PC rendered as RET).
 var unconditional = map[string]bool{
-	"JMP": true, "RET": true, "UD2": true, "INT": true,
-	"B": true, "BR": true, "UDF": true,
+	// JMP and RET are the GoSyntax renderings on amd64, 386, arm64,
+	// riscv64, loong64, ppc64, and s390x.
+	"JMP": true, "RET": true,
+	"B":  true, // arm unconditional branch (conditionals render as B.EQ etc.)
+	"BR": true, // ppc64 and s390x unconditional branch, arm64 indirect
+	// Traps and inter-function padding.
+	"UD2": true, "INT": true, "UDF": true, "UNIMP": true,
+	"BREAK": true, "EBREAK": true,
+	// wasm.
+	"return": true, "br": true, "br_table": true, "unreachable": true,
 }
 
 // splitBlocks cuts rendered lines into basic blocks. leaders marks
@@ -61,7 +73,8 @@ func splitBlocks(lines []string, addrs []uint64, leaders, ends map[int]bool) []b
 func blockEnds(nl []disasm.Line, insts []disasm.Inst) map[int]bool {
 	ends := map[int]bool{}
 	for i, l := range nl {
-		if l.Target >= 0 || unconditional[insts[i].Op] {
+		op, _, _ := strings.Cut(insts[i].Text, " ")
+		if l.Target >= 0 || unconditional[op] {
 			ends[i] = true
 		}
 	}

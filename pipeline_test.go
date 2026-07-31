@@ -10,6 +10,8 @@ import (
 
 	"github.com/zeebo/clingy"
 
+	"github.com/loov/ixdiff/internal/disasm"
+	"github.com/loov/ixdiff/internal/objfile"
 	"github.com/loov/ixdiff/internal/testbin"
 )
 
@@ -183,6 +185,41 @@ func TestPipeline_BlocksSideBySide(t *testing.T) {
 	}
 	if regexp.MustCompile(`(?m)^\+[0-9a-f]+: `).MatchString(out) {
 		t.Errorf("unexpected unified insert lines with --blocks --side-by-side:\n%s", out)
+	}
+}
+
+// TestPipeline_BlocksSplitsOnRISCV checks that block splitting works
+// on an architecture whose returns and jumps decode under raw
+// mnemonics absent from the terminator set (riscv64 JAL/JALR): the
+// rendered RET of real main.main code must end its block, and the
+// end-to-end --blocks diff must shrink against the plain one by
+// matching unchanged blocks away.
+func TestPipeline_BlocksSplitsOnRISCV(t *testing.T) {
+	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "riscv64"})
+	noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "riscv64", GCFlags: "-l"})
+
+	bin, err := objfile.Open(base)
+	if err != nil {
+		t.Fatalf("open %s: %v", base, err)
+	}
+	defer bin.Close()
+	fn := bin.Funcs["main.main"]
+	insts, err := disasm.Decode(bin.Arch, fn.Code(), fn.Addr, disasm.Lookup(bin))
+	if err != nil {
+		t.Fatalf("decode main.main: %v", err)
+	}
+	nl := disasm.NormalizeLines(fn.Name, insts, disasm.Options{})
+	ends := blockEnds(nl, insts)
+	for i, in := range insts {
+		if in.Text == "RET" && !ends[i] {
+			t.Errorf("RET at %x (raw op %s) does not end a block", in.Addr, in.Op)
+		}
+	}
+
+	plain := run(t, "--fn", "main.main", base, noinline)
+	blocks := run(t, "--blocks", "--fn", "main.main", base, noinline)
+	if strings.Count(blocks, "\n") >= strings.Count(plain, "\n") {
+		t.Errorf("--blocks output is not smaller than the plain diff; block splitting degraded:\nplain:\n%s\nblocks:\n%s", plain, blocks)
 	}
 }
 
