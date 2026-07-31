@@ -97,3 +97,18 @@ func TestOpen_ELF_ARM64(t *testing.T) {
 		t.Error("main.main not found")
 	}
 }
+
+func TestOpen_ELF_S390X(t *testing.T) {
+	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "s390x"})
+
+	bin, err := objfile.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if bin.Arch != objfile.ArchS390X {
+		t.Errorf("Arch = %v, want s390x", bin.Arch)
+	}
+	if bin.Funcs["main.main"] == nil {
+		t.Error("main.main not found")
+	}
+}

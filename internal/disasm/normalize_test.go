@@ -105,6 +105,27 @@ func TestNormalize_MasksAddressImmediates(t *testing.T) {
 	}
 }
 
+func TestNormalize_S390XOperands(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x2000, Len: 6, Op: "MOVD", Text: "MOVD 100(PC), R1"}, // larl of far data
+		{Addr: 0x2006, Len: 4, Op: "BNE", Text: "BNE 2(PC)"},         // offset in 4-byte units
+		{Addr: 0x200a, Len: 4, Op: "MOVB", Text: "MOVB $1, R2"},
+		{Addr: 0x200e, Len: 6, Op: "BRC", Text: "BRC $7, 1(PC)"}, // offset in 6-byte units
+		{Addr: 0x2014, Len: 2, Op: "RET", Text: "RET"},
+	}
+	want := []string{
+		"MOVD <addr>(PC), R1",
+		"BNE L1",
+		"MOVB $1, R2",
+		"BRC $7, L2",
+		"RET",
+	}
+	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestNormalize_MaskSP(t *testing.T) {
 	insts := []disasm.Inst{
 		{Addr: 0x1000, Len: 7, Op: "SUB", Text: "SUBQ $0x330, SP"},
@@ -169,7 +190,7 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 // with different ldflags shifts symbol addresses without changing
 // function bodies.
 func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64"} {
+	for _, arch := range []string{"amd64", "arm64", "s390x"} {
 		t.Run(arch, func(t *testing.T) {
 			pathA := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch})
 			pathB := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch, Tags: "pad"})

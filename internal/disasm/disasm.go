@@ -4,8 +4,10 @@ package disasm
 
 import (
 	"fmt"
+	"strings"
 
 	"golang.org/x/arch/arm64/arm64asm"
+	"golang.org/x/arch/s390x/s390xasm"
 	"golang.org/x/arch/x86/x86asm"
 
 	"github.com/loov/ixdiff/internal/objfile"
@@ -39,6 +41,8 @@ func Decode(arch objfile.Arch, code []byte, addr uint64, lookup SymLookup) ([]In
 		return decodeX86(code, addr, lookup, 32), nil
 	case objfile.ArchARM64:
 		return decodeARM64(code, addr, lookup), nil
+	case objfile.ArchS390X:
+		return decodeS390X(code, addr, lookup), nil
 	default:
 		return nil, fmt.Errorf("unsupported architecture %v", arch)
 	}
@@ -81,6 +85,35 @@ func decodeARM64(code []byte, addr uint64, lookup SymLookup) []Inst {
 			Text: arm64asm.GoSyntax(inst, addr, lookup, nil),
 		})
 		code, addr = code[4:], addr+4
+	}
+	if len(code) > 0 {
+		insts = append(insts, byteInst(addr, code))
+	}
+	return insts
+}
+
+// decodeS390X decodes variable-length (2, 4, or 6 byte) s390x
+// instructions. The mnemonic is taken from the rendered text, since
+// GoSyntax rewrites raw opcodes into Go assembler names (BRASL
+// becomes CALL, BCR 15 becomes RET).
+func decodeS390X(code []byte, addr uint64, lookup SymLookup) []Inst {
+	insts := make([]Inst, 0, len(code)/4)
+	for len(code) >= 2 {
+		inst, err := s390xasm.Decode(code)
+		if err != nil || inst.Len == 0 || inst.Len > len(code) || inst.Op == 0 {
+			insts = append(insts, byteInst(addr, code[:2]))
+			code, addr = code[2:], addr+2
+			continue
+		}
+		text := s390xasm.GoSyntax(inst, addr, lookup)
+		op, _, _ := strings.Cut(text, " ")
+		insts = append(insts, Inst{
+			Addr: addr,
+			Len:  inst.Len,
+			Op:   op,
+			Text: text,
+		})
+		code, addr = code[inst.Len:], addr+uint64(inst.Len)
 	}
 	if len(code) > 0 {
 		insts = append(insts, byteInst(addr, code))

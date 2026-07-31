@@ -52,7 +52,6 @@ func dataMasked(name string, size uint64) bool {
 // branch targets and the data lookups resolve ADRP-based data
 // references, so a call or load retargeted to a different symbol is
 // never mistaken for relocation.
-//
 func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint64,
 	oldSym, newSym SymLookup, oldData, newData DataLookup) bool {
 	if len(oldCode) != len(newCode) {
@@ -66,6 +65,9 @@ func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint
 	case objfile.Arch386:
 		return relocOnlyX86(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData, 32)
 	default:
+		// No fast path for s390x: its variable-length encoding has no
+		// cheap word-by-word walk, so triage always falls back to
+		// full analysis. Only a missed speedup, never wrong.
 		return false
 	}
 }

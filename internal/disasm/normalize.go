@@ -65,6 +65,7 @@ func Normalize(name string, insts []Inst, opts Options) []string {
 //   - IP-relative data displacements (amd64) become <data>(IP)
 //   - ADRP page offsets (arm64) become <page>(PC), and the follow-up
 //     low-12-bit immediates on ADRP'd registers become <lo12>
+//   - pc-relative data references (s390x larl etc.) become <addr>(PC)
 //
 // Call targets are expected to be symbolized already, via a Lookup
 // passed to Decode. Plain immediates are kept untouched.
@@ -185,8 +186,8 @@ var (
 )
 
 var (
-	immArg  = regexp.MustCompile(`^\$\d+$`)
-	immHex  = regexp.MustCompile(`^\$0x[0-9a-f]+$`)
+	immArg = regexp.MustCompile(`^\$\d+$`)
+	immHex = regexp.MustCompile(`^\$0x[0-9a-f]+$`)
 	// A zero displacement renders as a bare (Rn), so the offset part
 	// is optional: masking must treat 0(Rn) and (Rn) alike or an
 	// offset shifting to or from zero leaks through.
@@ -248,14 +249,19 @@ func (n *norm) arg(in Inst, arg string, adrp map[string]uint64) string {
 		return "<addr>"
 
 	case pcRel.MatchString(arg):
-		// arm64 pc-relative: instruction count for branches,
-		// byte offset for ADRP page computation.
+		// pc-relative, in units of the instruction's own length:
+		// always 4 on arm64, 2/4/6 on s390x. Branches inside the
+		// function become labels; anything else — including s390x
+		// relative data references (LARL and friends), whose exact
+		// byte offset the off(PC) rendering truncates away — is
+		// masked as relocation noise. ADRP is a byte offset instead,
+		// handled by the page computation.
 		if in.Op == "ADRP" {
 			return "<page>(PC)"
 		}
 		d, err := strconv.ParseInt(pcRel.FindStringSubmatch(arg)[1], 10, 64)
 		if err == nil {
-			if idx, ok := n.indexAt[uint64(int64(in.Addr)+d*4)]; ok {
+			if idx, ok := n.indexAt[uint64(int64(in.Addr)+d*int64(in.Len))]; ok {
 				return n.mark(idx)
 			}
 		}

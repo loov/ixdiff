@@ -75,6 +75,20 @@ func TestDecode_ARM64_KnownBytes(t *testing.T) {
 	}
 }
 
+func TestDecode_S390X_KnownBytes(t *testing.T) {
+	code := []byte{
+		0xa7, 0x29, 0x00, 0x01, // LGHI $1, R2 -> MOVB $1, R2
+		0x07, 0xfe, // BCR 15, R14 -> RET
+	}
+	insts, err := disasm.Decode(objfile.ArchS390X, code, 0x1000, nil)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got, want := strings.Join(opList(insts), " "), "MOVB RET"; got != want {
+		t.Errorf("ops = %q, want %q", got, want)
+	}
+}
+
 func TestDecode_RealFunction(t *testing.T) {
 	tests := []struct {
 		name string
@@ -83,6 +97,7 @@ func TestDecode_RealFunction(t *testing.T) {
 		{"amd64", testbin.Config{GOOS: "linux", GOARCH: "amd64"}},
 		{"arm64", testbin.Config{GOOS: "linux", GOARCH: "arm64"}},
 		{"386", testbin.Config{GOOS: "linux", GOARCH: "386"}},
+		{"s390x", testbin.Config{GOOS: "linux", GOARCH: "s390x"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
