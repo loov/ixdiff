@@ -69,6 +69,8 @@ func Normalize(name string, insts []Inst, opts Options) []string {
 //   - ADDIS $0 upper halves (ppc64) become <hi>, and the follow-up
 //     low-16-bit immediates on ADDIS'd registers are resolved the
 //     same way as ADRP follow-ups
+//   - AUIPC upper immediates (riscv64) become $<page>, with the same
+//     <lo12> treatment for follow-up immediates on AUIPC'd registers
 //
 // Call targets are expected to be symbolized already, via a Lookup
 // passed to Decode. Plain immediates are kept untouched.
@@ -82,8 +84,9 @@ func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 	}
 
 	// adrp maps registers holding a partial address — an ADRP page
-	// (arm64) or an ADDIS $0 upper half (ppc64) — to that base, so
-	// follow-up low-bit immediates can be resolved to symbols.
+	// (arm64), an AUIPC pc-plus-upper (riscv64), or an ADDIS $0 upper
+	// half (ppc64) — to that base, so follow-up low-bit immediates
+	// can be resolved to symbols.
 	adrp := map[string]uint64{}
 
 	lines := make([]Line, len(insts))
@@ -102,8 +105,8 @@ func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 		}
 		dest := args[len(args)-1]
 		switch {
-		case in.Op == "ADRP":
-			if page, ok := adrpPage(in); ok {
+		case in.Op == "ADRP", in.Op == "AUIPC":
+			if page, ok := pairPage(in); ok {
 				adrp[dest] = page
 			} else {
 				delete(adrp, dest)
@@ -205,10 +208,10 @@ var (
 	// A zero displacement renders as a bare (Rn), so the offset part
 	// is optional: masking must treat 0(Rn) and (Rn) alike or an
 	// offset shifting to or from zero leaks through.
-	dispArg = regexp.MustCompile(`^(-?\d+)?\((R\d+|RSP)\)$`)
+	dispArg = regexp.MustCompile(`^(-?\d+)?\((R\d+|RSP|X\d+)\)$`)
 	// spDisp matches stack displacements: hex on amd64 (0x10(SP)),
-	// decimal on arm64 (-112(RSP)).
-	spDisp = regexp.MustCompile(`^(?:-?(?:0x[0-9a-f]+|\d+))?\((SP|RSP)\)$`)
+	// decimal on arm64 (-112(RSP)) and riscv64 (16(X2)).
+	spDisp = regexp.MustCompile(`^(?:-?(?:0x[0-9a-f]+|\d+))?\((SP|RSP|X2)\)$`)
 )
 
 // arg rewrites a single operand according to the Normalize rules;
@@ -237,6 +240,10 @@ func (n *norm) arg(in Inst, arg string, adrp map[string]uint64) string {
 			return "$<addr>"
 		}
 	}
+	if in.Op == "AUIPC" && immSig.MatchString(arg) {
+		// The AUIPC upper immediate shifts whenever code or data moves.
+		return "$<page>"
+	}
 	if in.Op == "ADDIS" && arg != "$0" && immSig.MatchString(arg) &&
 		strings.HasPrefix(in.Text, "ADDIS $0,") {
 		// The upper half of a ppc64 absolute address, the analogue of
@@ -258,13 +265,14 @@ func (n *norm) arg(in Inst, arg string, adrp map[string]uint64) string {
 			}
 		}
 	}
-	if in.Op == "ADD" && immArg.MatchString(arg) {
-		// ADD $lo12, Rn, Rd completing an ADRP pair.
-		if rest, ok := strings.CutPrefix(in.Text, "ADD "+arg+", "); ok {
+	if (in.Op == "ADD" || in.Op == "ADDI") && immSig.MatchString(arg) {
+		// ADD $lo12, Rn, Rd (arm64) or ADDI $lo12, Xn, Xd (riscv64,
+		// signed) completing an ADRP/AUIPC pair.
+		if rest, ok := strings.CutPrefix(in.Text, in.Op+" "+arg+", "); ok {
 			if reg, _, ok := strings.Cut(rest, ","); ok {
 				if page, tracked := adrp[reg]; tracked {
-					imm, _ := strconv.ParseUint(arg[1:], 10, 64)
-					if ref, ok := n.data(page + imm); ok {
+					imm, _ := strconv.ParseInt(arg[1:], 10, 64)
+					if ref, ok := n.data(page + uint64(imm)); ok {
 						return "$" + ref
 					}
 					return "$<lo12>"
@@ -371,14 +379,27 @@ func maskGenNumber(name string) string {
 	return genNumbered.ReplaceAllString(name, "$1<n>")
 }
 
-// adrpPage computes the page address an ADRP instruction produces,
-// from its GoSyntax rendering "ADRP off(PC), Rd".
-func adrpPage(in Inst) (uint64, bool) {
+// pairPage computes the address the first instruction of an address
+// materialization pair produces: the page address of an arm64 ADRP,
+// or the pc-plus-upper-immediate of a riscv64 AUIPC.
+func pairPage(in Inst) (uint64, bool) {
 	_, rest, ok := strings.Cut(in.Text, " ")
 	if !ok {
 		return 0, false
 	}
 	first, _, _ := strings.Cut(rest, ", ")
+	if in.Op == "AUIPC" {
+		// GoSyntax renders the raw 20-bit upper immediate as $imm;
+		// the instruction adds imm<<12, sign-extended, to the pc.
+		if !immArg.MatchString(first) {
+			return 0, false
+		}
+		imm, err := strconv.ParseUint(first[1:], 10, 32)
+		if err != nil {
+			return 0, false
+		}
+		return in.Addr + uint64(int64(int32(uint32(imm)<<12))), true
+	}
 	m := pcRel.FindStringSubmatch(first)
 	if m == nil {
 		return 0, false

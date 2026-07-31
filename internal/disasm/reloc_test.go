@@ -156,6 +156,158 @@ func TestRelocOnly_ARM64(t *testing.T) {
 	}
 }
 
+func TestRelocOnly_RISCV64(t *testing.T) {
+	const (
+		rvRet = 0x00008067 // JALR X0, (X1)
+		rvNop = 0x00000013 // ADDI X0, X0, 0
+		rvMov = 0x00100513 // ADDI X10, X0, 1
+	)
+	// jal encodes JAL rd with a signed byte offset in J-type bit order.
+	jal := func(rd uint32, off int32) uint32 {
+		u := uint32(off)
+		return 0x6F | rd<<7 | u>>20&1<<31 | u>>1&0x3FF<<21 | u>>11&1<<20 | u>>12&0xFF<<12
+	}
+	call := func(off int32) uint32 { return jal(1, off) }
+	auipc := func(imm20, rd uint32) uint32 { return 0x17 | rd<<7 | imm20<<12 }
+	addi := func(imm int32, rs1, rd uint32) uint32 {
+		return 0x13 | rd<<7 | rs1<<15 | uint32(imm)&0xFFF<<20
+	}
+	ld := func(imm int32, rs1, rd uint32) uint32 {
+		return 0x03 | rd<<7 | 3<<12 | rs1<<15 | uint32(imm)&0xFFF<<20
+	}
+
+	// Symbol and data layout mirror the arm64 test: callee at
+	// 0x11000/0x22000, otherFn at 0x13000/0x24000, globalA at
+	// 0x15000/0x26000, globalB at 0x15100/0x26100; the function sits
+	// at 0x10000/0x20000.
+	oldSym := func(addr uint64) (string, uint64) {
+		switch {
+		case addr >= 0x11000 && addr < 0x12000:
+			return "callee", 0x11000
+		case addr >= 0x13000 && addr < 0x14000:
+			return "otherFn", 0x13000
+		}
+		return "", 0
+	}
+	newSym := func(addr uint64) (string, uint64) {
+		switch {
+		case addr >= 0x22000 && addr < 0x23000:
+			return "callee", 0x22000
+		case addr >= 0x24000 && addr < 0x25000:
+			return "otherFn", 0x24000
+		}
+		return "", 0
+	}
+	oldData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x15000 && addr < 0x15100:
+			return "globalA", 0x15000, 0x100
+		case addr >= 0x15100 && addr < 0x15200:
+			return "globalB", 0x15100, 0x100
+		}
+		return "", 0, 0
+	}
+	newData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x26000 && addr < 0x26100:
+			return "globalA", 0x26000, 0x100
+		case addr >= 0x26100 && addr < 0x26200:
+			return "globalB", 0x26100, 0x100
+		}
+		return "", 0, 0
+	}
+
+	tests := []struct {
+		name     string
+		old, new []uint32
+		want     bool
+	}{
+		{
+			name: "identical",
+			old:  []uint32{rvMov, rvRet},
+			new:  []uint32{rvMov, rvRet},
+			want: true,
+		},
+		{
+			// old: 0x10000 -> 0x11000 (callee), new: 0x20000 -> 0x22000 (callee)
+			name: "same callee at shifted address",
+			old:  []uint32{call(0x1000), rvRet},
+			new:  []uint32{call(0x2000), rvRet},
+			want: true,
+		},
+		{
+			// old calls callee, new calls otherFn: a real change.
+			name: "retargeted call",
+			old:  []uint32{call(0x1000), rvRet},
+			new:  []uint32{call(0x4000), rvRet},
+			want: false,
+		},
+		{
+			name: "intra-function branch retargeted",
+			old:  []uint32{jal(0, 4), rvNop, rvRet},
+			new:  []uint32{jal(0, 8), rvNop, rvRet},
+			want: false,
+		},
+		{
+			// old: 0x10000 + 5<<12 + 0x40 = globalA+0x40; new:
+			// 0x20000 + 6<<12 + 0x40 = globalA+0x40. Same symbol, moved.
+			name: "auipc data ref moved with same symbol",
+			old:  []uint32{auipc(5, 5), addi(0x40, 5, 10), rvRet},
+			new:  []uint32{auipc(6, 5), addi(0x40, 5, 10), rvRet},
+			want: true,
+		},
+		{
+			name: "auipc load moved with same symbol",
+			old:  []uint32{auipc(5, 5), ld(0x40, 5, 10), rvRet},
+			new:  []uint32{auipc(6, 5), ld(0x40, 5, 10), rvRet},
+			want: true,
+		},
+		{
+			// old resolves globalA+0x40, new globalB+0x40: a load
+			// switched to a different global is a real change.
+			name: "auipc data ref switched to different global",
+			old:  []uint32{auipc(5, 5), addi(0x40, 5, 10), rvRet},
+			new:  []uint32{auipc(6, 5), addi(0x140, 5, 10), rvRet},
+			want: false,
+		},
+		{
+			// Identical words, but the same numeric address resolves
+			// to different symbols per side: still a real change.
+			name: "identical auipc words different symbol",
+			old:  []uint32{auipc(5, 5), addi(0x140, 5, 10), rvRet},
+			new:  []uint32{auipc(5, 5), addi(0x140, 5, 10), rvRet},
+			want: false,
+		},
+		{
+			name: "addi immediate differs without auipc base",
+			old:  []uint32{addi(0x123, 1, 10), rvRet},
+			new:  []uint32{addi(0x456, 1, 10), rvRet},
+			want: false,
+		},
+		{
+			name: "real instruction change",
+			old:  []uint32{rvMov, rvRet},
+			new:  []uint32{rvNop, rvRet},
+			want: false,
+		},
+		{
+			name: "length mismatch",
+			old:  []uint32{rvRet},
+			new:  []uint32{rvNop, rvRet},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := disasm.RelocOnly(objfile.ArchRISCV64,
+				words(tt.old...), words(tt.new...), 0x10000, 0x20000, oldSym, newSym, oldData, newData)
+			if got != tt.want {
+				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRelocOnly_AMD64(t *testing.T) {
 	// Symbol layout mirrors the arm64 test: callee at 0x11000 (old)
 	// and 0x22000 (new), otherFn at 0x13000/0x24000; functions start

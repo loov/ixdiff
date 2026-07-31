@@ -119,6 +119,23 @@ func TestDecode_S390X_KnownBytes(t *testing.T) {
 	}
 }
 
+func TestDecode_RISCV64_KnownBytes(t *testing.T) {
+	code := []byte{
+		0x13, 0x05, 0x10, 0x00, // ADDI $1, X0, X10
+		0x67, 0x80, 0x00, 0x00, // RET (JALR X0, (X1))
+	}
+	insts, err := disasm.Decode(objfile.ArchRISCV64, code, 0x1000, nil)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got, want := strings.Join(opList(insts), " "), "ADDI JALR"; got != want {
+		t.Errorf("ops = %q, want %q", got, want)
+	}
+	if insts[1].Text != "RET" {
+		t.Errorf("JALR text = %q, want RET", insts[1].Text)
+	}
+}
+
 func TestDecode_RealFunction(t *testing.T) {
 	tests := []struct {
 		name string
@@ -130,6 +147,7 @@ func TestDecode_RealFunction(t *testing.T) {
 		{"s390x", testbin.Config{GOOS: "linux", GOARCH: "s390x"}},
 		{"ppc64", testbin.Config{GOOS: "linux", GOARCH: "ppc64"}},
 		{"ppc64le", testbin.Config{GOOS: "linux", GOARCH: "ppc64le"}},
+		{"riscv64", testbin.Config{GOOS: "linux", GOARCH: "riscv64"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

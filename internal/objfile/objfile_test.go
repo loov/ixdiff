@@ -96,3 +96,18 @@ func TestOpen_ELF_OtherArches(t *testing.T) {
 		})
 	}
 }
+
+func TestOpen_ELF_RISCV64(t *testing.T) {
+	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "riscv64"})
+
+	bin, err := objfile.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if bin.Arch != objfile.ArchRISCV64 {
+		t.Errorf("Arch = %v, want riscv64", bin.Arch)
+	}
+	if bin.Funcs["main.main"] == nil {
+		t.Error("main.main not found")
+	}
+}

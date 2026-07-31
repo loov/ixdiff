@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/arch/arm64/arm64asm"
 	"golang.org/x/arch/ppc64/ppc64asm"
+	"golang.org/x/arch/riscv64/riscv64asm"
 	"golang.org/x/arch/s390x/s390xasm"
 	"golang.org/x/arch/x86/x86asm"
 
@@ -49,6 +50,8 @@ func Decode(arch objfile.Arch, code []byte, addr uint64, lookup SymLookup) ([]In
 		return decodePPC64(code, addr, lookup, binary.BigEndian), nil
 	case objfile.ArchPPC64LE:
 		return decodePPC64(code, addr, lookup, binary.LittleEndian), nil
+	case objfile.ArchRISCV64:
+		return decodeRISCV64(code, addr, lookup), nil
 	default:
 		return nil, fmt.Errorf("unsupported architecture %v", arch)
 	}
@@ -146,6 +149,32 @@ func decodePPC64(code []byte, addr uint64, lookup SymLookup, ord binary.ByteOrde
 			Len:  inst.Len,
 			Op:   op,
 			Text: text,
+		})
+		code, addr = code[inst.Len:], addr+uint64(inst.Len)
+	}
+	if len(code) > 0 {
+		insts = append(insts, byteInst(addr, code))
+	}
+	return insts
+}
+
+func decodeRISCV64(code []byte, addr uint64, lookup SymLookup) []Inst {
+	insts := make([]Inst, 0, len(code)/4)
+	// Instructions are 4 bytes, or 2 with the compressed extension;
+	// undecodable input advances by the 2-byte minimum unit so a
+	// later compressed instruction cannot be straddled.
+	for len(code) >= 2 {
+		inst, err := riscv64asm.Decode(code)
+		if err != nil || inst.Len == 0 {
+			insts = append(insts, byteInst(addr, code[:2]))
+			code, addr = code[2:], addr+2
+			continue
+		}
+		insts = append(insts, Inst{
+			Addr: addr,
+			Len:  inst.Len,
+			Op:   inst.Op.String(),
+			Text: riscv64asm.GoSyntax(inst, addr, lookup, nil),
 		})
 		code, addr = code[inst.Len:], addr+uint64(inst.Len)
 	}

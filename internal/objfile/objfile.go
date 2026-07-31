@@ -25,6 +25,7 @@ const (
 	ArchS390X
 	ArchPPC64   // big-endian
 	ArchPPC64LE // little-endian
+	ArchRISCV64
 )
 
 // String returns the Go name of the architecture.
@@ -42,6 +43,8 @@ func (a Arch) String() string {
 		return "ppc64"
 	case ArchPPC64LE:
 		return "ppc64le"
+	case ArchRISCV64:
+		return "riscv64"
 	default:
 		return "unknown"
 	}
@@ -199,6 +202,11 @@ func openELF(r io.ReaderAt, data []byte) (*Binary, error) {
 		} else {
 			arch = ArchPPC64LE
 		}
+	case elf.EM_RISCV:
+		if ef.Class != elf.ELFCLASS64 {
+			return nil, fmt.Errorf("unsupported ELF class %v for RISC-V", ef.Class)
+		}
+		arch = ArchRISCV64
 	default:
 		return nil, fmt.Errorf("unsupported ELF machine %v", ef.Machine)
 	}

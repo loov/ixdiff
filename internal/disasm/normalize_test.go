@@ -84,6 +84,29 @@ func TestNormalize_PPC64Operands(t *testing.T) {
 	}
 }
 
+func TestNormalize_RISCV64Operands(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x2000, Len: 4, Op: "AUIPC", Text: "AUIPC $228, X5"},
+		{Addr: 0x2004, Len: 4, Op: "MOV", Text: "MOV 16(X5), X10"},
+		{Addr: 0x2008, Len: 4, Op: "ADDI", Text: "ADDI $-192, X5, X7"},
+		{Addr: 0x200c, Len: 4, Op: "BNE", Text: "BNE X6, X7, 2(PC)"},
+		{Addr: 0x2010, Len: 4, Op: "MOV", Text: "MOV $42, X10"},
+		{Addr: 0x2014, Len: 4, Op: "JALR", Text: "RET"},
+	}
+	want := []string{
+		"AUIPC $<page>, X5",    // upper immediate masked
+		"MOV <lo12>(X5), X10",  // load off the AUIPC'd register masked
+		"ADDI $<lo12>, X5, X7", // low immediate completing the pair masked
+		"BNE X6, X7, L1",       // branch -> label of RET
+		"MOV $42, X10",         // plain immediate kept
+		"RET",
+	}
+	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestNormalize_LabelsStableUnderInsertion checks that inserting an
 // instruction that is not a branch target does not renumber labels:
 // numbering follows target order, not instruction index.
@@ -161,6 +184,7 @@ func TestNormalize_MaskSP(t *testing.T) {
 		{Addr: 0x1007, Len: 8, Op: "MOV", Text: "MOVQ R11, 0x390(SP)"},
 		{Addr: 0x100f, Len: 4, Op: "MOVD", Text: "MOVD.W R30, -112(RSP)"},
 		{Addr: 0x1013, Len: 4, Op: "CMP", Text: "CMPQ SP, 0x10(R14)"},
+		{Addr: 0x1017, Len: 4, Op: "MOV", Text: "MOV X1, 16(X2)"},
 	}
 
 	masked := disasm.Normalize("main.f", insts, disasm.Options{MaskSP: true})
@@ -169,6 +193,7 @@ func TestNormalize_MaskSP(t *testing.T) {
 		"MOVQ R11, <sp>(SP)",    // amd64 hex displacement masked
 		"MOVD.W R30, <sp>(RSP)", // arm64 decimal displacement masked
 		"CMPQ SP, 0x10(R14)",    // non-SP displacement kept
+		"MOV X1, <sp>(X2)",      // riscv64 stack-pointer displacement masked
 	}
 	if diff := cmp.Diff(want, masked); diff != "" {
 		t.Errorf("MaskSP on mismatch (-want +got):\n%s", diff)
@@ -187,7 +212,7 @@ func TestNormalize_MaskSP(t *testing.T) {
 // amd64 IP-relative form and the arm64 ADRP+low12 pair (which also
 // validates the ADRP page computation against GoSyntax output).
 func TestNormalize_ResolvesDataSymbols(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "ppc64", "ppc64le"} {
+	for _, arch := range []string{"amd64", "arm64", "riscv64", "ppc64", "ppc64le"} {
 		t.Run(arch, func(t *testing.T) {
 			bin, err := objfile.Open(testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch}))
 			if err != nil {
@@ -219,7 +244,7 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 // with different ldflags shifts symbol addresses without changing
 // function bodies.
 func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "s390x", "ppc64", "ppc64le"} {
+	for _, arch := range []string{"amd64", "arm64", "riscv64", "s390x", "ppc64", "ppc64le"} {
 		t.Run(arch, func(t *testing.T) {
 			pathA := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch})
 			pathB := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch, Tags: "pad"})

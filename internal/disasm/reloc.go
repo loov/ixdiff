@@ -49,9 +49,9 @@ func dataMasked(name string, size uint64) bool {
 // result means the full normalize-and-diff pipeline would classify
 // the pair as relocation-only noise; false means unknown, and the
 // caller must fall back to full analysis. The sym lookups resolve
-// branch targets and the data lookups resolve ADRP-based data
-// references, so a call or load retargeted to a different symbol is
-// never mistaken for relocation.
+// branch targets and the data lookups resolve ADRP- and AUIPC-based
+// data references, so a call or load retargeted to a different symbol
+// is never mistaken for relocation.
 //
 // Architectures without a fast path (s390x; ppc64, whose ADDIS/ADD
 // pairs would need tracking analogous to arm64 ADRP) always report
@@ -68,6 +68,8 @@ func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint
 		return relocOnlyX86(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData, 64)
 	case objfile.Arch386:
 		return relocOnlyX86(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData, 32)
+	case objfile.ArchRISCV64:
+		return relocOnlyRISCV64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
 	default:
 		// No fast path for s390x: its variable-length encoding has no
 		// cheap word-by-word walk, so triage always falls back to
@@ -186,6 +188,140 @@ func relocOnlyARM64(oldCode, newCode []byte, oldAddr, newAddr uint64,
 		}
 	}
 	return true
+}
+
+// riscv64 instruction encodings, per the RISC-V ISA manual. The opcode
+// occupies bits 6:0, rd bits 11:7, and rs1 bits 19:15.
+const (
+	rvOpMask = 0x7F
+	rvAUIPC  = 0x17
+	rvJAL    = 0x6F
+	rvLoad   = 0x03 // LB/LH/LW/LD and unsigned variants
+	rvStore  = 0x23 // SB/SH/SW/SD
+	// ADDI: opcode OP-IMM with funct3 0.
+	rvAddiMask = 0x707F
+	rvADDI     = 0x13
+	rvRdMask   = 0x1F << 7
+	rvImmI     = 0xFFF << 20 // I-type immediate: bits 31:20
+	rvImmS     = 0xFE00_0F80 // S-type immediate: bits 31:25 and 11:7
+)
+
+// relocOnlyRISCV64 walks both bodies word by word, mirroring
+// relocOnlyARM64 with riscv64's AUIPC-based address materialization.
+// Differing words are accepted only when the difference is confined to
+// a field that relocation legitimately changes:
+//
+//   - JAL displacement, when the target lies outside the function on
+//     both sides and both sides resolve to the same symbol at the same
+//     offset
+//   - the AUIPC upper immediate
+//   - the 12-bit immediate of an ADDI, load, or store based on an
+//     AUIPC register, when the combined address resolves to the same
+//     data symbol and offset on both sides
+//
+// Anything else — including any other use of an AUIPC-based register,
+// whose address semantics this fast path cannot follow — fails,
+// leaving the decision to full analysis. The walk assumes 4-byte
+// instructions; Go does not emit the compressed extension, and a
+// misparse can only produce a spurious false, never a wrong true,
+// because differing compressed words fail the acceptable-field checks.
+func relocOnlyRISCV64(oldCode, newCode []byte, oldAddr, newAddr uint64,
+	oldSym, newSym SymLookup, oldData, newData DataLookup) bool {
+	// tracked marks registers holding an AUIPC-derived address;
+	// oldPage and newPage hold that address per side.
+	var tracked uint32
+	var oldPage, newPage [32]uint64
+
+	n := len(oldCode) &^ 3
+	for i := 0; i < n; i += 4 {
+		o := binary.LittleEndian.Uint32(oldCode[i:])
+		w := binary.LittleEndian.Uint32(newCode[i:])
+		rs1 := o >> 15 & 0x1F
+
+		switch {
+		case o&rvOpMask == rvAUIPC && w&rvOpMask == rvAUIPC && o&rvRdMask == w&rvRdMask:
+			rd := o >> 7 & 0x1F
+			oldPage[rd] = auipcTarget(o, oldAddr+uint64(i))
+			newPage[rd] = auipcTarget(w, newAddr+uint64(i))
+			tracked |= 1 << rd
+			continue
+
+		case o == w && tracked&(1<<rs1) == 0:
+			// Identical and independent of any page register.
+
+		case o&rvOpMask == rvJAL && w&rvOpMask == rvJAL && o&rvRdMask == w&rvRdMask:
+			oldTarget := jalTarget(o, oldAddr, uint64(i))
+			newTarget := jalTarget(w, newAddr, uint64(i))
+			intraOld := within(oldTarget, oldAddr, uint64(len(oldCode)))
+			intraNew := within(newTarget, newAddr, uint64(len(oldCode)))
+			if intraOld || intraNew {
+				if o != w || !intraOld || !intraNew {
+					return false // retargeted intra-function branch
+				}
+				break
+			}
+			oldName, oldBase := oldSym(oldTarget)
+			newName, newBase := newSym(newTarget)
+			if oldName == "" || oldName != newName ||
+				oldTarget-oldBase != newTarget-newBase {
+				return false // different callee
+			}
+
+		case o&^uint32(rvImmI) == w&^uint32(rvImmI) && tracked&(1<<rs1) != 0 &&
+			(o&rvAddiMask == rvADDI || o&rvOpMask == rvLoad):
+			if !sameData(oldPage[rs1]+immI(o), newPage[rs1]+immI(w), oldData, newData) {
+				return false
+			}
+
+		case o&^uint32(rvImmS) == w&^uint32(rvImmS) && tracked&(1<<rs1) != 0 &&
+			o&rvOpMask == rvStore:
+			if !sameData(oldPage[rs1]+immS(o), newPage[rs1]+immS(w), oldData, newData) {
+				return false
+			}
+
+		default:
+			// Real change, or an AUIPC-based access this fast path
+			// cannot resolve.
+			return false
+		}
+
+		// Any instruction naming a page register in the rd field
+		// invalidates it. Stores and branches keep immediate bits
+		// there; clearing on those is spurious but only costs
+		// precision.
+		tracked &^= 1 << (o >> 7 & 0x1F)
+	}
+	// A trailing partial word must match exactly.
+	for i := n; i < len(oldCode); i++ {
+		if oldCode[i] != newCode[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// auipcTarget computes the address produced by an AUIPC word at pc:
+// pc plus the sign-extended upper immediate shifted left by 12.
+func auipcTarget(word uint32, pc uint64) uint64 {
+	return pc + uint64(int64(int32(word&0xFFFF_F000)))
+}
+
+// jalTarget computes the absolute target of the JAL word at offset
+// off. The immediate is a signed 21-bit byte offset stored in the
+// scrambled J-type bit order.
+func jalTarget(word uint32, funcAddr, off uint64) uint64 {
+	imm := word>>31<<20 | word>>12&0xFF<<12 | word>>20&1<<11 | word>>21&0x3FF<<1
+	return funcAddr + off + uint64(int64(int32(imm<<11))>>11) // sign-extend 21 bits
+}
+
+// immI extracts the sign-extended I-type immediate of word.
+func immI(word uint32) uint64 {
+	return uint64(int64(int32(word)) >> 20)
+}
+
+// immS extracts the sign-extended S-type immediate of word.
+func immS(word uint32) uint64 {
+	return uint64(int64(int32(word))>>25<<5 | int64(word>>7&0x1F))
 }
 
 // sameData reports whether two addresses render identically under the

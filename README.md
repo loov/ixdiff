@@ -108,8 +108,8 @@ Other flags:
 3. The rest are disassembled and normalized: call targets are
    symbolized, intra-function branches become labels derived from an
    instruction alignment (so inserting code doesn't renumber every
-   label), and address-dependent operands — IP/ADRP-relative data
-   references, ppc64 ADDIS/ADD address-materialization pairs,
+   label), and address-dependent operands — IP/ADRP/AUIPC-relative
+   data references, ppc64 ADDIS/ADD address-materialization pairs,
    address-valued immediates — are masked.
 4. Normalized instructions are diffed per function; opcode histograms
    aggregate into the summary.
@@ -120,11 +120,11 @@ those are the differences an optimization comparison is looking for.
 
 ## Limitations
 
-- Instruction-level masking exists for amd64, arm64, 386, s390x, and
-  ppc64/ppc64le only; other architectures are unsupported. On s390x,
-  pc-relative data references (`larl` and friends) are always masked
-  rather than resolved to symbol names, and the relocation-only fast
-  path does not apply.
+- Instruction-level masking exists for amd64, arm64, 386, riscv64,
+  s390x, and ppc64/ppc64le only; other architectures are unsupported.
+  On s390x, pc-relative data references (`larl` and friends) are
+  always masked rather than resolved to symbol names, and the
+  relocation-only fast path does not apply.
 - Non-Go binaries work only as well as their symbol tables; duplicate
   static symbols (cgo) keep the last definition.
 - The pclntab header magic list needs an update when a new Go release
