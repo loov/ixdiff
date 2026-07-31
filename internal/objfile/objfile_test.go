@@ -68,6 +68,21 @@ func TestFunc_Code_MatchesFileContents(t *testing.T) {
 	}
 }
 
+func TestOpen_ELF_386(t *testing.T) {
+	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "386"})
+
+	bin, err := objfile.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if bin.Arch != objfile.Arch386 {
+		t.Errorf("Arch = %v, want 386", bin.Arch)
+	}
+	if bin.Funcs["main.main"] == nil {
+		t.Error("main.main not found")
+	}
+}
+
 func TestOpen_ELF_ARM64(t *testing.T) {
 	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "arm64"})
 

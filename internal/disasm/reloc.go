@@ -62,7 +62,9 @@ func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint
 	case objfile.ArchARM64:
 		return relocOnlyARM64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
 	case objfile.ArchAMD64:
-		return relocOnlyAMD64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
+		return relocOnlyX86(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData, 64)
+	case objfile.Arch386:
+		return relocOnlyX86(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData, 32)
 	default:
 		return false
 	}

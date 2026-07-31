@@ -46,6 +46,21 @@ func TestDecode_AMD64_UndecodableBytesBecomeBYTE(t *testing.T) {
 	}
 }
 
+func TestDecode_386_KnownBytes(t *testing.T) {
+	code := []byte{
+		0x89, 0xd8, // MOVL BX, AX
+		0xe8, 0xf9, 0xff, 0xff, 0xff, // CALL .-7
+		0xc3, // RET
+	}
+	insts, err := disasm.Decode(objfile.Arch386, code, 0x1000, nil)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got, want := strings.Join(opList(insts), " "), "MOV CALL RET"; got != want {
+		t.Errorf("ops = %q, want %q", got, want)
+	}
+}
+
 func TestDecode_ARM64_KnownBytes(t *testing.T) {
 	code := []byte{
 		0x20, 0x00, 0x80, 0xd2, // MOVD $1, R0
@@ -67,6 +82,7 @@ func TestDecode_RealFunction(t *testing.T) {
 	}{
 		{"amd64", testbin.Config{GOOS: "linux", GOARCH: "amd64"}},
 		{"arm64", testbin.Config{GOOS: "linux", GOARCH: "arm64"}},
+		{"386", testbin.Config{GOOS: "linux", GOARCH: "386"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

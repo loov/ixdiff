@@ -34,7 +34,9 @@ func Decode(arch objfile.Arch, code []byte, addr uint64, lookup SymLookup) ([]In
 	}
 	switch arch {
 	case objfile.ArchAMD64:
-		return decodeAMD64(code, addr, lookup), nil
+		return decodeX86(code, addr, lookup, 64), nil
+	case objfile.Arch386:
+		return decodeX86(code, addr, lookup, 32), nil
 	case objfile.ArchARM64:
 		return decodeARM64(code, addr, lookup), nil
 	default:
@@ -42,10 +44,11 @@ func Decode(arch objfile.Arch, code []byte, addr uint64, lookup SymLookup) ([]In
 	}
 }
 
-func decodeAMD64(code []byte, addr uint64, lookup SymLookup) []Inst {
+// decodeX86 decodes x86 code in the given mode: 64 for amd64, 32 for 386.
+func decodeX86(code []byte, addr uint64, lookup SymLookup, mode int) []Inst {
 	insts := make([]Inst, 0, len(code)/4)
 	for len(code) > 0 {
-		inst, err := x86asm.Decode(code, 64)
+		inst, err := x86asm.Decode(code, mode)
 		if err != nil || inst.Len == 0 || inst.Op == 0 {
 			insts = append(insts, byteInst(addr, code[:1]))
 			code, addr = code[1:], addr+1

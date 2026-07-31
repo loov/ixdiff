@@ -19,6 +19,8 @@ func openPE(r io.ReaderAt, data []byte) (*Binary, error) {
 		arch = ArchAMD64
 	case pe.IMAGE_FILE_MACHINE_ARM64:
 		arch = ArchARM64
+	case pe.IMAGE_FILE_MACHINE_I386:
+		arch = Arch386
 	default:
 		return nil, fmt.Errorf("unsupported PE machine %#x", pf.Machine)
 	}

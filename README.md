@@ -101,7 +101,7 @@ Other flags:
    are matched by name, with renamed functions (closure renumbering,
    generic respecialization, near-identical bodies) re-paired among
    the added/removed leftovers.
-2. Byte-identical pairs are skipped outright. On arm64, pairs whose
+2. Byte-identical pairs are skipped outright. Pairs whose
    bytes differ only in relocation fields (verified against the symbol
    tables, so a retargeted call still counts as a change) are
    classified without disassembly.
@@ -119,8 +119,8 @@ those are the differences an optimization comparison is looking for.
 
 ## Limitations
 
-- Instruction-level masking exists for amd64 and arm64 only; other
-  architectures are unsupported.
+- Instruction-level masking exists for amd64, arm64, and 386 only;
+  other architectures are unsupported.
 - Non-Go binaries work only as well as their symbol tables; duplicate
   static symbols (cgo) keep the last definition.
 - The pclntab header magic list needs an update when a new Go release

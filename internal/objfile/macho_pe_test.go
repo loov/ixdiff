@@ -16,6 +16,7 @@ func TestOpen_MachOAndPE_FindMainMain(t *testing.T) {
 		{"macho amd64", testbin.Config{GOOS: "darwin", GOARCH: "amd64"}, objfile.ArchAMD64},
 		{"macho arm64", testbin.Config{GOOS: "darwin", GOARCH: "arm64"}, objfile.ArchARM64},
 		{"pe amd64", testbin.Config{GOOS: "windows", GOARCH: "amd64"}, objfile.ArchAMD64},
+		{"pe 386", testbin.Config{GOOS: "windows", GOARCH: "386"}, objfile.Arch386},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

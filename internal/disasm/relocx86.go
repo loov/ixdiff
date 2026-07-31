@@ -6,7 +6,7 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
-// relocOnlyAMD64 decodes both bodies in lockstep and accepts a
+// relocOnlyX86 decodes both bodies in lockstep and accepts a
 // difference only when the decoded instructions are identical except
 // for a relocation-bearing field:
 //
@@ -15,16 +15,19 @@ import (
 //     displacements still resolve, since equal bytes at different
 //     addresses can reach different symbols)
 //   - a RIP-relative memory displacement whose targets render
-//     identically under the data-reference rules
+//     identically under the data-reference rules (amd64 only; 386 has
+//     no IP-relative addressing, so its absolute data references fail
+//     here and fall back to full analysis)
 //
 // Differing immediates, registers, or opcodes fail, as does anything
-// that does not decode; full analysis then decides.
-func relocOnlyAMD64(oldCode, newCode []byte, oldAddr, newAddr uint64,
-	oldSym, newSym SymLookup, oldData, newData DataLookup) bool {
+// that does not decode; full analysis then decides. mode is the x86asm
+// decode mode: 64 for amd64, 32 for 386.
+func relocOnlyX86(oldCode, newCode []byte, oldAddr, newAddr uint64,
+	oldSym, newSym SymLookup, oldData, newData DataLookup, mode int) bool {
 	off := 0
 	for off < len(oldCode) {
-		oi, oerr := x86asm.Decode(oldCode[off:], 64)
-		ni, nerr := x86asm.Decode(newCode[off:], 64)
+		oi, oerr := x86asm.Decode(oldCode[off:], mode)
+		ni, nerr := x86asm.Decode(newCode[off:], mode)
 		if oerr != nil || nerr != nil || oi.Op == 0 || ni.Op == 0 {
 			// Undecodable tail (alignment padding): exact match only.
 			return bytes.Equal(oldCode[off:], newCode[off:])

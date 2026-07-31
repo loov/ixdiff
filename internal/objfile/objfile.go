@@ -20,6 +20,7 @@ const (
 	ArchUnknown Arch = iota
 	ArchAMD64
 	ArchARM64
+	Arch386
 )
 
 // String returns the Go name of the architecture.
@@ -29,6 +30,8 @@ func (a Arch) String() string {
 		return "amd64"
 	case ArchARM64:
 		return "arm64"
+	case Arch386:
+		return "386"
 	default:
 		return "unknown"
 	}
@@ -174,6 +177,8 @@ func openELF(r io.ReaderAt, data []byte) (*Binary, error) {
 		arch = ArchAMD64
 	case elf.EM_AARCH64:
 		arch = ArchARM64
+	case elf.EM_386:
+		arch = Arch386
 	default:
 		return nil, fmt.Errorf("unsupported ELF machine %v", ef.Machine)
 	}
