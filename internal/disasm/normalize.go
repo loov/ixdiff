@@ -121,16 +121,17 @@ func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 			args[j] = n.arg(in, strings.TrimPrefix(arg, " "), adrp)
 		}
 		dest := args[len(args)-1]
-		switch {
-		case in.Op == "ADRP", in.Op == "AUIPC", in.Op == "PCALAU12I":
+		switch in.Op {
+		case "ADRP", "AUIPC", "PCALAU12I":
 			// R0 is the loong64 hardwired zero register: a PCALAU12I
 			// writing it materializes nothing trackable.
-			if page, ok := pairPage(in); ok && !(in.Op == "PCALAU12I" && dest == "R0") {
+			zero := in.Op == "PCALAU12I" && dest == "R0"
+			if page, ok := pairPage(in); ok && !zero {
 				adrp[dest] = page
 			} else {
 				delete(adrp, dest)
 			}
-		case in.Op == "ADDIS":
+		case "ADDIS":
 			if base, ok := addisBase(in); ok {
 				adrp[dest] = base
 			} else {
