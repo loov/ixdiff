@@ -153,6 +153,22 @@ func TestPipeline_AllAppendsRankedDiffs(t *testing.T) {
 	}
 }
 
+// TestPipeline_BlocksSideBySide checks that --blocks renders its
+// unmatched-instruction diff as two columns when --side-by-side is
+// also given, instead of silently falling back to unified output.
+func TestPipeline_BlocksSideBySide(t *testing.T) {
+	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
+	noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", GCFlags: "-l"})
+
+	out := run(t, "--blocks", "--side-by-side", "--fn", "main.main", base, noinline)
+	if !regexp.MustCompile(`(?m)[|>] [0-9a-f]+: `).MatchString(out) {
+		t.Errorf("expected side-by-side marker rows with --blocks:\n%s", out)
+	}
+	if regexp.MustCompile(`(?m)^\+[0-9a-f]+: `).MatchString(out) {
+		t.Errorf("unexpected unified insert lines with --blocks --side-by-side:\n%s", out)
+	}
+}
+
 // TestPipeline_StateFilterAndNameSort checks the table-scoping flags:
 // --state keeps only the requested states and --sort name orders the
 // table alphabetically for stable CI output.

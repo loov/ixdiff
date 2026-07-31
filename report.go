@@ -669,6 +669,11 @@ func writeFuncDiffSide(w io.Writer, a *analysis, pal palette) {
 		fmt.Fprintf(w, "bytes differ only by relocation; normalized assembly is identical\n")
 		return
 	}
+	writeHunksSide(w, a, pal)
+}
+
+// writeHunksSide renders the hunked edit script of a as two columns.
+func writeHunksSide(w io.Writer, a *analysis, pal palette) {
 	for _, hunk := range hunks(diffLines(a)) {
 		fmt.Fprintln(w, pal.paint(pal.hunk, fmt.Sprintf("@@ %s @@", hunkRange(hunk))))
 

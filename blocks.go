@@ -137,7 +137,7 @@ func matchBlocks(old, new []block) (moves []blockMove, restOld, restNew block) {
 // and without a profile of itself, 2026-07): moved-and-changed blocks
 // reduced diff lines by under 1% in 3 of 34 changed functions, so
 // fuzzy matching stays unimplemented.
-func writeFuncBlocks(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary, opts disasm.Options, pal palette) error {
+func writeFuncBlocks(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary, opts disasm.Options, pal palette, sideBy bool) error {
 	oldInsts, err := disasm.Decode(old.Arch, p.Old.Code(), p.Old.Addr, disasm.Lookup(old))
 	if err != nil {
 		return fmt.Errorf("disassembling old %s: %w", p.Name, err)
@@ -173,7 +173,11 @@ func writeFuncBlocks(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary, opts
 		oldAddrs: restOld.addrs,
 		newAddrs: restNew.addrs,
 	}
-	writeHunks(w, rest, pal)
+	if sideBy {
+		writeHunksSide(w, rest, pal)
+	} else {
+		writeHunks(w, rest, pal)
+	}
 	return nil
 }
 

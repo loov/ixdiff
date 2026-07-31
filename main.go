@@ -74,17 +74,17 @@ type cmdDiff struct {
 	fns     []string
 	filters []string
 	top     int
-	sortBy string
-	states []string
+	sortBy  string
+	states  []string
 	// stateSet is states parsed for rankPairs; nil keeps every state.
 	stateSet map[fndiff.State]bool
-	maskSP bool
-	json   bool
-	sideBy bool
-	blocks bool
-	all    bool
-	color  string
-	pal    palette
+	maskSP   bool
+	json     bool
+	sideBy   bool
+	blocks   bool
+	all      bool
+	color    string
+	pal      palette
 
 	oldPath string
 	newPath string
@@ -215,7 +215,7 @@ func (c *cmdDiff) writeAll(w io.Writer, pairs []*fndiff.Pair, analyzed []*analys
 		switch p.State {
 		case fndiff.StateChanged:
 			if c.blocks {
-				if err := writeFuncBlocks(w, p, old, new, c.norm(), c.pal); err != nil {
+				if err := writeFuncBlocks(w, p, old, new, c.norm(), c.pal, c.sideBy); err != nil {
 					return err
 				}
 				continue
@@ -419,7 +419,7 @@ func (c *cmdDiff) writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binar
 		}
 	default:
 		if c.blocks {
-			return writeFuncBlocks(w, p, old, new, c.norm(), c.pal)
+			return writeFuncBlocks(w, p, old, new, c.norm(), c.pal, c.sideBy)
 		}
 		analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, c.norm())
 		if err != nil {
