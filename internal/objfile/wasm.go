@@ -69,10 +69,14 @@ func openWasm(data []byte) (*Binary, error) {
 				n := sec.uint()
 				start := base + sec.pos
 				sec.bytes(n)
+				if sec.fail {
+					// Check inside the loop: the declared count is
+					// attacker-controlled and reads past the end are
+					// no-ops, so an unchecked loop would spin on a
+					// huge count in a tiny section.
+					return nil, fmt.Errorf("malformed wasm code section")
+				}
 				bodies = append(bodies, [2]uint64{uint64(start), n})
-			}
-			if sec.fail {
-				return nil, fmt.Errorf("malformed wasm code section")
 			}
 		case wasmSecData:
 			segs = parseWasmData(sec)
@@ -121,6 +125,9 @@ func openWasm(data []byte) (*Binary, error) {
 		if end := s.off + int64(len(s.init)); end > hi {
 			hi = end
 		}
+	}
+	if memPages > 65536 {
+		memPages = 65536 // wasm spec maximum; also keeps the multiply below in range
 	}
 	if memEnd := int64(memPages) * 64 * 1024; memEnd > hi {
 		hi = memEnd
@@ -187,9 +194,10 @@ func parseWasmNames(sec *wasmCursor, out map[uint64]string) {
 		for range sub.uint() {
 			idx := sub.uint()
 			name := sub.name()
-			if !sub.fail {
-				out[idx] = name
+			if sub.fail {
+				break // huge declared count in a tiny subsection
 			}
+			out[idx] = name
 		}
 	}
 }
@@ -245,13 +253,19 @@ const wasmMaxImage = 1 << 31
 // mismatch means the layout assumption does not hold and the name
 // section is used instead.
 func wasmGoNames(segs []wasmSeg, nfuncs int) []string {
-	var end int64
+	var end, total int64
 	for _, s := range segs {
 		if e := s.off + int64(len(s.init)); e > end {
 			end = e
 		}
+		total += int64(len(s.init))
 	}
-	if end <= 0 || end > wasmMaxImage || nfuncs == 0 {
+	// Bound the image by the data actually present: a hostile module
+	// can place a tiny segment at a huge offset, and allocating up to
+	// wasmMaxImage from a few bytes of input is an OOM vector. Real Go
+	// binaries lay segments out compactly, so a generous slack over the
+	// total initialized size is safe.
+	if end <= 0 || end > wasmMaxImage || end > total+1<<20 || nfuncs == 0 {
 		return nil
 	}
 	mem := make([]byte, end)

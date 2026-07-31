@@ -118,11 +118,12 @@ func (f *Func) Code() []byte {
 		return f.code
 	}
 	b := f.bin
-	if f.Addr < b.textAddr || f.Addr+f.Size > b.textAddr+uint64(len(b.text)) {
+	if f.Addr < b.textAddr {
 		return nil
 	}
-	off := f.Addr - b.textAddr
-	return b.text[off : off+f.Size]
+	// sectionSlice rejects out-of-range and overflowing (addr, size)
+	// pairs, so a corrupt symbol near 2^64 cannot wrap past the check.
+	return sectionSlice(b.text, f.Addr-b.textAddr, f.Size)
 }
 
 // Open maps the binary at path and parses it. It detects the file
@@ -192,8 +193,13 @@ func (b *Binary) addSizeless(syms []sizelessSym) {
 	})
 	for i, sym := range syms {
 		end := b.textAddr + uint64(len(b.text))
-		if i+1 < len(syms) {
-			end = syms[i+1].addr
+		// Skip aliases at the same address (common in Mach-O and PE)
+		// so they all get the real extent instead of size zero.
+		for _, next := range syms[i+1:] {
+			if next.addr != sym.addr {
+				end = next.addr
+				break
+			}
 		}
 		b.addFunc(sym.name, sym.addr, end-sym.addr)
 	}
@@ -215,8 +221,16 @@ func openELF(r io.ReaderAt, data []byte) (*Binary, error) {
 	case elf.EM_386:
 		arch = Arch386
 	case elf.EM_S390:
+		// EM_S390 also covers 31-bit s390 ELFCLASS32 objects; only
+		// the 64-bit s390x variant is supported.
+		if ef.Class != elf.ELFCLASS64 {
+			return nil, fmt.Errorf("unsupported ELF machine %v (32-bit)", ef.Machine)
+		}
 		arch = ArchS390X
 	case elf.EM_PPC64:
+		if ef.Class != elf.ELFCLASS64 {
+			return nil, fmt.Errorf("unsupported ELF machine %v (32-bit)", ef.Machine)
+		}
 		// The two GOARCHes differ only in byte order, recorded in
 		// the ELF ident and needed later for instruction decoding.
 		if ef.ByteOrder == binary.BigEndian {
@@ -352,9 +366,17 @@ func (b *Binary) DataSym(addr uint64) (name string, base, size uint64) {
 	s := b.dataSyms[i]
 	end := s.addr + s.size
 	if s.size == 0 {
-		end = ^uint64(0)
 		if i+1 < len(b.dataSyms) {
 			end = b.dataSyms[i+1].addr
+		} else {
+			// Last symbol: bound it by its loadable section instead of
+			// infinity, so unrelated high addresses don't resolve to it.
+			for _, r := range b.ranges {
+				if r[0] <= s.addr && s.addr < r[1] {
+					end = r[1]
+					break
+				}
+			}
 		}
 	}
 	if addr >= end {
@@ -374,16 +396,29 @@ func (b *Binary) WasmName(index uint64) (name string, ok bool) {
 	return b.wasmNames[index], true
 }
 
-// addRange records a loadable section's virtual address range.
+// addRange records a loadable section's virtual address range. An end
+// that would wrap past 2^64 is clamped to the top of the address space
+// so Contains stays correct for corrupt section headers.
 func (b *Binary) addRange(addr, size uint64) {
-	if size > 0 {
-		b.ranges = append(b.ranges, [2]uint64{addr, addr + size})
+	if size == 0 {
+		return
 	}
+	end := addr + size
+	if end < addr {
+		end = ^uint64(0)
+	}
+	b.ranges = append(b.ranges, [2]uint64{addr, end})
 }
 
 // addFunc records a function if it lies within the text section.
+// Overflow-safe: a corrupt symbol with addr near 2^64 must not wrap
+// past the bounds check.
 func (b *Binary) addFunc(name string, addr, size uint64) {
-	if addr < b.textAddr || addr+size > b.textAddr+uint64(len(b.text)) {
+	if addr < b.textAddr {
+		return
+	}
+	off := addr - b.textAddr
+	if off > uint64(len(b.text)) || size > uint64(len(b.text))-off {
 		return
 	}
 	b.Funcs[name] = &Func{Name: name, Addr: addr, Size: size, bin: b}

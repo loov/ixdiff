@@ -1,11 +1,31 @@
 package objfile_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/loov/ixdiff/internal/objfile"
 	"github.com/loov/ixdiff/internal/testbin"
 )
+
+// TestOpen_Wasm_HugeCodeCountErrorsPromptly feeds a tiny module whose
+// code section declares ~2^63 functions; it must error out promptly
+// instead of spinning on the bogus count or allocating for it.
+func TestOpen_Wasm_HugeCodeCountErrorsPromptly(t *testing.T) {
+	count := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01} // LEB128, huge
+	module := []byte("\x00asm\x01\x00\x00\x00")
+	module = append(module, 10, byte(len(count))) // code section id, size
+	module = append(module, count...)
+
+	path := filepath.Join(t.TempDir(), "truncated.wasm")
+	if err := os.WriteFile(path, module, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := objfile.Open(path); err == nil {
+		t.Fatal("Open succeeded on a truncated code section with a huge declared count")
+	}
+}
 
 func TestOpen_Wasm_FindsMainMain(t *testing.T) {
 	for _, goos := range []string{"wasip1", "js"} {
