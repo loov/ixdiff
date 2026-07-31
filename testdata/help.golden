@@ -17,6 +17,7 @@ Flags:
         --blocks           match basic blocks before diffing, tolerating block reordering
         --all              follow the summary with a diff of every function in the ranking table
         --color string     colorize diffs: auto, always, or never (default "auto")
+        --version          print the module version and VCS revision
 
 Global flags:
     -h, --help         prints help for the command

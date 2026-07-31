@@ -33,6 +33,9 @@ import (
 )
 
 func main() {
+	// The flag is also declared in Setup so it appears in --help, but
+	// clingy requires the two binary arguments, so a bare --version is
+	// answered before it runs.
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		fmt.Println(version())
 		return
@@ -83,6 +86,7 @@ type cmdDiff struct {
 	sideBy   bool
 	blocks   bool
 	all      bool
+	version  bool
 	color    string
 	pal      palette
 
@@ -126,6 +130,8 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 	c.all = params.Flag("all", "follow the summary with a diff of every function in the ranking table", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 	c.color = params.Flag("color", "colorize diffs: auto, always, or never", "auto").(string)
+	c.version = params.Flag("version", "print the module version and VCS revision", false,
+		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 
 	c.oldPath = params.Arg("old", "path to the baseline binary").(string)
 	c.newPath = params.Arg("new", "path to the changed binary").(string)
@@ -133,6 +139,10 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 
 // Execute runs the comparison and writes the report to stdout.
 func (c *cmdDiff) Execute(ctx context.Context) error {
+	if c.version {
+		fmt.Fprintln(clingy.Stdout(ctx), version())
+		return nil
+	}
 	switch c.sortBy {
 	case "size", "insts", "name":
 	default:
