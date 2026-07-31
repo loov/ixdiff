@@ -55,6 +55,54 @@ func TestNormalize_ARM64Operands(t *testing.T) {
 	}
 }
 
+// TestNormalize_ARM64ADRMasked pins that ADR is exempt from branch
+// label math: like ADRP, the renderer prints its raw byte offset, so
+// scaling it by the instruction length would mislabel an address
+// materialization as a branch to whatever instruction the bogus target
+// hits (here 2*4 bytes ahead, the RET).
+func TestNormalize_ARM64ADRMasked(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x2000, Len: 4, Op: "ADR", Text: "ADR 2(PC), R2"},
+		{Addr: 0x2004, Len: 4, Op: "MOVD", Text: "MOVD $42, R0"},
+		{Addr: 0x2008, Len: 4, Op: "RET", Text: "RET"},
+	}
+	want := []string{
+		"ADR <addr>(PC), R2",
+		"MOVD $42, R0",
+		"RET",
+	}
+	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestNormalize_RISCV64CompressedBranch pins the pc-relative unit for
+// compressed instructions: the riscv64 renderer divides byte offsets
+// by 4 even when the instruction is 2 bytes, so label math must scale
+// by 4 regardless of Len. Scaling by Len would aim the JAL at 0x2006,
+// the middle of an instruction, and mask the branch as <addr>(PC).
+func TestNormalize_RISCV64CompressedBranch(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x2000, Len: 2, Op: "JAL", Text: "JAL X0, 3(PC)"},
+		{Addr: 0x2002, Len: 2, Op: "MOV", Text: "MOV X10, X11"},
+		{Addr: 0x2004, Len: 4, Op: "MOV", Text: "MOV $42, X10"},
+		{Addr: 0x2008, Len: 4, Op: "MOV", Text: "MOV $7, X11"},
+		{Addr: 0x200c, Len: 4, Op: "JALR", Text: "RET"},
+	}
+	want := []string{
+		"JAL X0, L1", // 3(PC) = 12 bytes ahead: the RET
+		"MOV X10, X11",
+		"MOV $42, X10",
+		"MOV $7, X11",
+		"RET",
+	}
+	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestNormalize_PPC64Operands covers the ppc64 absolute-address
 // materialization pair: the ADDIS $0 upper half is masked as <hi> and
 // the follow-up low 16 bits on the same register as <lo12>/$<lo>,

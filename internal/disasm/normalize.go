@@ -393,19 +393,34 @@ func (n *norm) arg(in Inst, arg string, adrp map[string]uint64) string {
 		return "<addr>"
 
 	case pcRel.MatchString(arg):
-		// pc-relative, in units of the instruction's own length:
-		// always 4 on arm64, 2/4/6 on s390x. Branches inside the
-		// function become labels; anything else — including s390x
-		// relative data references (LARL and friends), whose exact
-		// byte offset the off(PC) rendering truncates away — is
-		// masked as relocation noise. ADRP is a byte offset instead,
-		// handled by the page computation.
+		// pc-relative branch. Branches inside the function become
+		// labels; anything else — including s390x relative data
+		// references (LARL and friends), whose exact byte offset the
+		// off(PC) rendering truncates away — is masked as relocation
+		// noise. ADRP and ADR render raw byte offsets instead: ADRP
+		// is handled by the page computation, ADR is pure address
+		// materialization masked like any moving address.
 		if in.Op == "ADRP" {
 			return "<page>(PC)"
 		}
+		if in.Op == "ADR" {
+			return "<addr>(PC)"
+		}
 		d, err := strconv.ParseInt(pcRel.FindStringSubmatch(arg)[1], 10, 64)
 		if err == nil {
-			if idx, ok := n.indexAt[uint64(int64(in.Addr)+d*int64(in.Len))]; ok {
+			// The renderers disagree on the offset unit: s390x
+			// divides the byte offset by the instruction's own
+			// length (2/4/6), while arm64, loong64, and riscv64
+			// always divide by 4 — including riscv64 compressed
+			// instructions, whose Len is 2. s390x has no 2-byte
+			// pc-relative instruction (its 2-byte formats carry no
+			// immediate), so Len 2 always means riscv64 and a unit
+			// of 4.
+			unit := int64(in.Len)
+			if unit == 2 {
+				unit = 4
+			}
+			if idx, ok := n.indexAt[uint64(int64(in.Addr)+d*unit)]; ok {
 				return n.mark(idx)
 			}
 		}

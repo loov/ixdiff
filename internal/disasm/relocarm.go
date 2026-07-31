@@ -8,7 +8,9 @@ import "encoding/binary"
 //
 //   - B/BL displacement, when the target lies outside the function on
 //     both sides (an intra-function branch that changed is real) and
-//     both sides resolve to the same symbol at the same offset
+//     both sides resolve to the same symbol at the same offset;
+//     identical displacements must also resolve consistently, since
+//     they reach different addresses under the two load addresses
 //   - a literal-pool word, when both sides resolve to the same data
 //     symbol at the same offset; identical pool words must also
 //     resolve consistently, since the same address can name different
@@ -45,16 +47,21 @@ func relocOnlyARM(oldCode, newCode []byte, oldAddr, newAddr uint64,
 				return false
 			}
 
-		case o == w:
-			// Identical and position-independent.
-
 		case armBranch(o) && armBranch(w) && o&0xFF000000 == w&0xFF000000:
-			// B/BL with the same condition and link bit.
+			// B/BL with the same condition and link bit. Checked
+			// before the identical-word shortcut: with the functions
+			// at different addresses, an identical displacement
+			// reaches a different target, which can resolve to a
+			// different symbol per side.
 			oldTarget := armBranchTarget(o, oldAddr, uint64(i))
 			newTarget := armBranchTarget(w, newAddr, uint64(i))
-			if within(oldTarget, oldAddr, uint64(len(oldCode))) ||
-				within(newTarget, newAddr, uint64(len(oldCode))) {
-				return false // retargeted intra-function branch
+			intraOld := within(oldTarget, oldAddr, uint64(len(oldCode)))
+			intraNew := within(newTarget, newAddr, uint64(len(oldCode)))
+			if intraOld || intraNew {
+				if o != w || !intraOld || !intraNew {
+					return false // retargeted intra-function branch
+				}
+				break
 			}
 			oldName, oldBase := oldSym(oldTarget)
 			newName, newBase := newSym(newTarget)
@@ -62,6 +69,9 @@ func relocOnlyARM(oldCode, newCode []byte, oldAddr, newAddr uint64,
 				oldTarget-oldBase != newTarget-newBase {
 				return false // different callee
 			}
+
+		case o == w:
+			// Identical and position-independent.
 
 		default:
 			return false

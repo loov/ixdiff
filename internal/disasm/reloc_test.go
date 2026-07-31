@@ -28,6 +28,9 @@ func TestRelocOnly_ARM64(t *testing.T) {
 	bl := func(off int32) uint32 { return 0x94000000 | uint32(off/4)&0x03FFFFFF }
 	adrp := func(page uint32, rd uint32) uint32 { return 0x90000000 | (page&3)<<29 | (page>>2&0x7FFFF)<<5 | rd }
 	addImm := func(imm, rn, rd uint32) uint32 { return 0x91000000 | imm<<10 | rn<<5 | rd }
+	// ldrSP encodes LDR X0, [SP, #imm*8]: an unsigned-offset load whose
+	// base field 31 means SP, not a general register.
+	ldrSP := func(imm uint32) uint32 { return 0xF9400000 | imm<<10 | 31<<5 }
 
 	// Symbol layout: old side has callee at 0x11000, new side at
 	// 0x22000; a second function otherFn sits at 0x13000/0x24000.
@@ -130,6 +133,24 @@ func TestRelocOnly_ARM64(t *testing.T) {
 			name: "add immediate differs without adrp base",
 			old:  []uint32{addImm(0x123, 1, 0), ret},
 			new:  []uint32{addImm(0x456, 1, 0), ret},
+			want: false,
+		},
+		{
+			// An ADRP to XZR must not track register 31: a later
+			// load/store whose base field is 31 addresses SP, and a
+			// changed stack offset is a real change.
+			name: "adrp to xzr does not license sp offset change",
+			old:  []uint32{adrp(0, 31), ldrSP(2), ret},
+			new:  []uint32{adrp(0, 31), ldrSP(3), ret},
+			want: false,
+		},
+		{
+			// Identical BL words, but the shared displacement reaches
+			// otherFn on the old side and nothing known on the new:
+			// the fast path must re-resolve, not shortcut on equality.
+			name: "identical call word different symbol per side",
+			old:  []uint32{bl(0x3000), ret},
+			new:  []uint32{bl(0x3000), ret},
 			want: false,
 		},
 		{
@@ -243,6 +264,21 @@ func TestRelocOnly_ARM(t *testing.T) {
 			name: "intra-function branch retargeted",
 			old:  []uint32{b(4), movW1, bxLR},
 			new:  []uint32{b(8), movW1, bxLR},
+			want: false,
+		},
+		{
+			name: "identical intra-function branch",
+			old:  []uint32{b(8), movW1, bxLR},
+			new:  []uint32{b(8), movW1, bxLR},
+			want: true,
+		},
+		{
+			// Identical BL words, but the shared displacement reaches
+			// otherFn on the old side and nothing known on the new:
+			// the fast path must re-resolve, not shortcut on equality.
+			name: "identical call word different symbol per side",
+			old:  []uint32{bl(0x3000), bxLR},
+			new:  []uint32{bl(0x3000), bxLR},
 			want: false,
 		},
 		{
@@ -430,6 +466,24 @@ func TestRelocOnly_RISCV64(t *testing.T) {
 			want: false,
 		},
 		{
+			// An AUIPC to X0 must not track register 0: X0 is
+			// hardwired zero, so an ADDI reading it is a plain li and
+			// a changed immediate is a real change.
+			name: "auipc to x0 does not license addi immediate change",
+			old:  []uint32{auipc(0, 0), addi(0x10, 0, 10), rvRet},
+			new:  []uint32{auipc(0, 0), addi(0x18, 0, 10), rvRet},
+			want: false,
+		},
+		{
+			// Identical JAL words, but the shared displacement reaches
+			// otherFn on the old side and nothing known on the new:
+			// the fast path must re-resolve, not shortcut on equality.
+			name: "identical call word different symbol per side",
+			old:  []uint32{call(0x3000), rvRet},
+			new:  []uint32{call(0x3000), rvRet},
+			want: false,
+		},
+		{
 			name: "real instruction change",
 			old:  []uint32{rvMov, rvRet},
 			new:  []uint32{rvNop, rvRet},
@@ -578,6 +632,15 @@ func TestRelocOnly_Loong64(t *testing.T) {
 			name: "add immediate differs without pcalau12i base",
 			old:  []uint32{addi(0x123, 1, 4), loRet},
 			new:  []uint32{addi(0x456, 1, 4), loRet},
+			want: false,
+		},
+		{
+			// Identical BL words, but the shared displacement reaches
+			// otherFn on the old side and nothing known on the new:
+			// the fast path must re-resolve, not shortcut on equality.
+			name: "identical call word different symbol per side",
+			old:  []uint32{bl(0x3000), loRet},
+			new:  []uint32{bl(0x3000), loRet},
 			want: false,
 		},
 		{

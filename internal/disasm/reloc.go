@@ -132,17 +132,22 @@ func relocOnlyARM64(oldCode, newCode []byte, oldAddr, newAddr uint64,
 
 		switch {
 		case o&armADRMask == armADRP && w&armADRMask == armADRP && o&0x1F == w&0x1F:
-			rd := o & 0x1F
-			oldPage[rd] = adrpTarget(o, oldAddr+uint64(i))
-			newPage[rd] = adrpTarget(w, newAddr+uint64(i))
-			tracked |= 1 << rd
+			// Register 31 in the Rd field of ADRP is XZR: such an
+			// ADRP materializes nothing, and a later load/store
+			// whose base field holds 31 means SP, not a page.
+			if rd := o & 0x1F; rd != 31 {
+				oldPage[rd] = adrpTarget(o, oldAddr+uint64(i))
+				newPage[rd] = adrpTarget(w, newAddr+uint64(i))
+				tracked |= 1 << rd
+			}
 			continue
-
-		case o == w && tracked&(1<<rn) == 0:
-			// Identical and independent of any page register.
 
 		case o&armBMask == armB && w&armBMask == armB,
 			o&armBMask == armBL && w&armBMask == armBL:
+			// Checked before the identical-word shortcut: with the
+			// functions at different addresses, an identical
+			// displacement reaches a different target, which can
+			// resolve to a different symbol per side.
 			oldTarget := branchTarget(o, oldAddr, uint64(i))
 			newTarget := branchTarget(w, newAddr, uint64(i))
 			intraOld := within(oldTarget, oldAddr, uint64(len(oldCode)))
@@ -159,6 +164,9 @@ func relocOnlyARM64(oldCode, newCode []byte, oldAddr, newAddr uint64,
 				oldTarget-oldBase != newTarget-newBase {
 				return false // different callee
 			}
+
+		case o == w && tracked&(1<<rn) == 0:
+			// Identical and independent of any page register.
 
 		case o&^armImm12 == w&^armImm12 && tracked&(1<<rn) != 0 &&
 			o&armAddMask == armAdd && w&armAddMask == armAdd:
@@ -245,16 +253,21 @@ func relocOnlyRISCV64(oldCode, newCode []byte, oldAddr, newAddr uint64,
 
 		switch {
 		case o&rvOpMask == rvAUIPC && w&rvOpMask == rvAUIPC && o&rvRdMask == w&rvRdMask:
-			rd := o >> 7 & 0x1F
-			oldPage[rd] = auipcTarget(o, oldAddr+uint64(i))
-			newPage[rd] = auipcTarget(w, newAddr+uint64(i))
-			tracked |= 1 << rd
+			// X0 is the hardwired zero register: an AUIPC writing it
+			// materializes nothing, and instructions reading X0
+			// afterwards read a constant zero, not the page.
+			if rd := o >> 7 & 0x1F; rd != 0 {
+				oldPage[rd] = auipcTarget(o, oldAddr+uint64(i))
+				newPage[rd] = auipcTarget(w, newAddr+uint64(i))
+				tracked |= 1 << rd
+			}
 			continue
 
-		case o == w && tracked&(1<<rs1) == 0:
-			// Identical and independent of any page register.
-
 		case o&rvOpMask == rvJAL && w&rvOpMask == rvJAL && o&rvRdMask == w&rvRdMask:
+			// Checked before the identical-word shortcut: with the
+			// functions at different addresses, an identical
+			// displacement reaches a different target, which can
+			// resolve to a different symbol per side.
 			oldTarget := jalTarget(o, oldAddr, uint64(i))
 			newTarget := jalTarget(w, newAddr, uint64(i))
 			intraOld := within(oldTarget, oldAddr, uint64(len(oldCode)))
@@ -271,6 +284,9 @@ func relocOnlyRISCV64(oldCode, newCode []byte, oldAddr, newAddr uint64,
 				oldTarget-oldBase != newTarget-newBase {
 				return false // different callee
 			}
+
+		case o == w && tracked&(1<<rs1) == 0:
+			// Identical and independent of any page register.
 
 		case o&^uint32(rvImmI) == w&^uint32(rvImmI) && tracked&(1<<rs1) != 0 &&
 			(o&rvAddiMask == rvADDI || o&rvOpMask == rvLoad):
@@ -406,11 +422,12 @@ func relocOnlyLoong64(oldCode, newCode []byte, oldAddr, newAddr uint64,
 			}
 			continue
 
-		case o == w && tracked&(1<<rj) == 0:
-			// Identical and independent of any page register.
-
 		case o&loongBMask == loongB && w&loongBMask == loongB,
 			o&loongBMask == loongBL && w&loongBMask == loongBL:
+			// Checked before the identical-word shortcut: with the
+			// functions at different addresses, an identical
+			// displacement reaches a different target, which can
+			// resolve to a different symbol per side.
 			oldTarget := branch26Target(o, oldAddr, uint64(i))
 			newTarget := branch26Target(w, newAddr, uint64(i))
 			intraOld := within(oldTarget, oldAddr, uint64(len(oldCode)))
@@ -427,6 +444,9 @@ func relocOnlyLoong64(oldCode, newCode []byte, oldAddr, newAddr uint64,
 				oldTarget-oldBase != newTarget-newBase {
 				return false // different callee
 			}
+
+		case o == w && tracked&(1<<rj) == 0:
+			// Identical and independent of any page register.
 
 		case o&^uint32(loongSi12) == w&^uint32(loongSi12) && tracked&(1<<rj) != 0 &&
 			o&loongAddMask == loongAdd && w&loongAddMask == loongAdd:
