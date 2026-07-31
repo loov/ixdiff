@@ -78,9 +78,11 @@ Other flags:
 | `--top N`, `--sort size\|insts` | ranking table length and order |
 | `--filter net/url`, `--filter ~^runtime\.` | scope the summary by substring or regexp (repeatable) |
 | `--side-by-side` | two-column diff view |
+| `--blocks` | match basic blocks before diffing, tolerating block reordering |
 | `--mask-sp` | ignore stack-offset shifts caused by frame-size changes |
 | `--json` | machine-readable output |
 | `--color auto\|always\|never` | diff coloring (auto respects NO_COLOR) |
+| `--version` | print the module version and VCS revision |
 
 ## How it works
 

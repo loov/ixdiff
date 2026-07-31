@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/zeebo/clingy"
 )
+
+var update = flag.Bool("update", false, "rewrite golden files")
 
 // parse runs the clingy environment over args and captures the resolved
 // command without executing it.
@@ -60,6 +65,34 @@ func TestCmdDiff_Setup_ResolvesFlagsAndArgs(t *testing.T) {
 				t.Errorf("options mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestHelp_MatchesGolden(t *testing.T) {
+	var stdout strings.Builder
+	_, err := clingy.Environment{
+		Name:   "ixdiff",
+		Root:   new(cmdDiff),
+		Args:   []string{"-h"},
+		Stdout: &stdout,
+		Stderr: new(strings.Builder),
+	}.Run(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("run -h: %v", err)
+	}
+
+	golden := filepath.Join("testdata", "help.golden")
+	if *update {
+		if err := os.WriteFile(golden, []byte(stdout.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(string(want), stdout.String()); diff != "" {
+		t.Errorf("help output drifted from %s (-want +got);\nupdate README.md and rerun with -update:\n%s", golden, diff)
 	}
 }
 

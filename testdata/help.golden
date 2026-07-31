@@ -1,0 +1,21 @@
+Usage:
+    ixdiff [flags] <old> <new>
+
+Arguments:
+    old    path to the baseline binary
+    new    path to the changed binary
+
+Flags:
+        --fn string        diff the function with this name or substring (repeatable) (repeated)
+        --filter string    limit the summary to functions containing this substring, ~regexp (repeatable) (repeated)
+        --top int          number of functions to list in ranking tables (default 100)
+        --sort string      ranking order for tables: size or insts (default "size")
+        --mask-sp          ignore stack-offset shifts caused by frame size changes
+        --json             emit machine-readable JSON instead of text
+        --side-by-side     show function diffs as two columns
+        --blocks           match basic blocks before diffing, tolerating block reordering
+        --color string     colorize diffs: auto, always, or never (default "auto")
+
+Global flags:
+    -h, --help         prints help for the command
+        --advanced     when used with -h, prints advanced flags help
