@@ -17,7 +17,7 @@ import (
 // and is allowed. This harness caught the zero-displacement <lo12>
 // masking bug.
 func TestRelocOnly_NeverContradictsFullAnalysis(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "riscv64", "386", "s390x", "ppc64", "ppc64le"} {
+		for _, arch := range []string{"amd64", "arm64", "riscv64", "loong64", "386", "s390x", "ppc64", "ppc64le"} {
 		for _, variant := range []testbin.Config{
 			{GOOS: "linux", GOARCH: arch, GCFlags: "-l"},
 			{GOOS: "linux", GOARCH: arch, Tags: "pad"},

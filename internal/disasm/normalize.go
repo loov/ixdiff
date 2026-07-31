@@ -69,8 +69,9 @@ func Normalize(name string, insts []Inst, opts Options) []string {
 //   - ADDIS $0 upper halves (ppc64) become <hi>, and the follow-up
 //     low-16-bit immediates on ADDIS'd registers are resolved the
 //     same way as ADRP follow-ups
-//   - AUIPC upper immediates (riscv64) become $<page>, with the same
-//     <lo12> treatment for follow-up immediates on AUIPC'd registers
+//   - AUIPC upper immediates (riscv64) and PCALAU12I page immediates
+//     (loong64) become $<page>, with the same <lo12> treatment for
+//     follow-up immediates on their registers
 //
 // Call targets are expected to be symbolized already, via a Lookup
 // passed to Decode. Plain immediates are kept untouched.
@@ -84,9 +85,9 @@ func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 	}
 
 	// adrp maps registers holding a partial address — an ADRP page
-	// (arm64), an AUIPC pc-plus-upper (riscv64), or an ADDIS $0 upper
-	// half (ppc64) — to that base, so follow-up low-bit immediates
-	// can be resolved to symbols.
+	// (arm64), an AUIPC pc-plus-upper (riscv64), a PCALAU12I page
+	// (loong64), or an ADDIS $0 upper half (ppc64) — to that base, so
+	// follow-up low-bit immediates can be resolved to symbols.
 	adrp := map[string]uint64{}
 
 	lines := make([]Line, len(insts))
@@ -105,8 +106,10 @@ func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 		}
 		dest := args[len(args)-1]
 		switch {
-		case in.Op == "ADRP", in.Op == "AUIPC":
-			if page, ok := pairPage(in); ok {
+		case in.Op == "ADRP", in.Op == "AUIPC", in.Op == "PCALAU12I":
+			// R0 is the loong64 hardwired zero register: a PCALAU12I
+			// writing it materializes nothing trackable.
+			if page, ok := pairPage(in); ok && !(in.Op == "PCALAU12I" && dest == "R0") {
 				adrp[dest] = page
 			} else {
 				delete(adrp, dest)
@@ -240,9 +243,24 @@ func (n *norm) arg(in Inst, arg string, adrp map[string]uint64) string {
 			return "$<addr>"
 		}
 	}
-	if in.Op == "AUIPC" && immSig.MatchString(arg) {
-		// The AUIPC upper immediate shifts whenever code or data moves.
+	if (in.Op == "AUIPC" || in.Op == "PCALAU12I") && immSig.MatchString(arg) {
+		// The AUIPC/PCALAU12I upper immediate shifts whenever code or
+		// data moves.
 		return "$<page>"
+	}
+	if in.Op == "ADDI.D" && immSig.MatchString(arg) {
+		// ADDV $lo12, Rn(, Rd) completing a PCALAU12I pair; in the
+		// two-operand rendering the destination doubles as Rn.
+		if rest, ok := strings.CutPrefix(in.Text, "ADDV "+arg+", "); ok {
+			reg, _, _ := strings.Cut(rest, ",")
+			if page, tracked := adrp[reg]; tracked {
+				imm, _ := strconv.ParseInt(arg[1:], 10, 64)
+				if ref, ok := n.data(page + uint64(imm)); ok {
+					return "$" + ref
+				}
+				return "$<lo12>"
+			}
+		}
 	}
 	if in.Op == "ADDIS" && arg != "$0" && immSig.MatchString(arg) &&
 		strings.HasPrefix(in.Text, "ADDIS $0,") {
@@ -381,14 +399,16 @@ func maskGenNumber(name string) string {
 
 // pairPage computes the address the first instruction of an address
 // materialization pair produces: the page address of an arm64 ADRP,
-// or the pc-plus-upper-immediate of a riscv64 AUIPC.
+// the pc-plus-upper-immediate of a riscv64 AUIPC, or the page address
+// of a loong64 PCALAU12I (whose immediate counts 4KiB pages).
 func pairPage(in Inst) (uint64, bool) {
 	_, rest, ok := strings.Cut(in.Text, " ")
 	if !ok {
 		return 0, false
 	}
 	first, _, _ := strings.Cut(rest, ", ")
-	if in.Op == "AUIPC" {
+	switch in.Op {
+	case "AUIPC":
 		// GoSyntax renders the raw 20-bit upper immediate as $imm;
 		// the instruction adds imm<<12, sign-extended, to the pc.
 		if !immArg.MatchString(first) {
@@ -399,16 +419,26 @@ func pairPage(in Inst) (uint64, bool) {
 			return 0, false
 		}
 		return in.Addr + uint64(int64(int32(uint32(imm)<<12))), true
+	case "PCALAU12I":
+		if !immSig.MatchString(first) {
+			return 0, false
+		}
+		pages, err := strconv.ParseInt(first[1:], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return uint64(int64(in.Addr)&^0xFFF + pages<<12), true
+	default:
+		m := pcRel.FindStringSubmatch(first)
+		if m == nil {
+			return 0, false
+		}
+		off, err := strconv.ParseInt(m[1], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return uint64(int64(in.Addr)&^0xFFF + off), true
 	}
-	m := pcRel.FindStringSubmatch(first)
-	if m == nil {
-		return 0, false
-	}
-	off, err := strconv.ParseInt(m[1], 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return uint64(int64(in.Addr)&^0xFFF + off), true
 }
 
 // addisBase computes the absolute base address a ppc64

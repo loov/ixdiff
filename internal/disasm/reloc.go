@@ -49,9 +49,9 @@ func dataMasked(name string, size uint64) bool {
 // result means the full normalize-and-diff pipeline would classify
 // the pair as relocation-only noise; false means unknown, and the
 // caller must fall back to full analysis. The sym lookups resolve
-// branch targets and the data lookups resolve ADRP- and AUIPC-based
-// data references, so a call or load retargeted to a different symbol
-// is never mistaken for relocation.
+// branch targets and the data lookups resolve page-based (ADRP,
+// AUIPC, PCALAU12I) data references, so a call or load retargeted to
+// a different symbol is never mistaken for relocation.
 //
 // Architectures without a fast path (s390x; ppc64, whose ADDIS/ADD
 // pairs would need tracking analogous to arm64 ADRP) always report
@@ -70,6 +70,8 @@ func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint
 		return relocOnlyX86(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData, 32)
 	case objfile.ArchRISCV64:
 		return relocOnlyRISCV64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
+	case objfile.ArchLoong64:
+		return relocOnlyLoong64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
 	default:
 		// No fast path for s390x: its variable-length encoding has no
 		// cheap word-by-word walk, so triage always falls back to
@@ -339,6 +341,144 @@ func sameData(oldAddr, newAddr uint64, oldData, newData DataLookup) bool {
 	}
 	return maskGenNumber(oldName) == maskGenNumber(newName) &&
 		oldAddr-oldBase == newAddr-newBase
+}
+
+// loong64 instruction encodings, per the LoongArch reference manual.
+// Register numbers occupy bits 4:0 (rd) and 9:5 (rj); instructions
+// are little-endian 32-bit words.
+const (
+	loongBMask  = 0xFC000000
+	loongB      = 0x50000000 // B offs26
+	loongBL     = 0x54000000 // BL offs26
+	loongPCMask = 0xFE000000
+	loongPCALA  = 0x1A000000 // PCALAU12I si20 in 24:5
+	// ADDI.D: si12 in 21:10.
+	loongAddMask = 0xFFC00000
+	loongAdd     = 0x02C00000
+	// Loads and stores with a si12 offset in 21:10 (ld.*, st.*,
+	// fld.*, fst.*, preld); the offset is unscaled.
+	loongLdStMask = 0xFC000000
+	loongLdSt     = 0x28000000
+	loongSi12     = 0xFFF << 10
+)
+
+// relocOnlyLoong64 walks both bodies word by word, mirroring
+// relocOnlyARM64 with PCALAU12I in the role of ADRP. Differing words
+// are accepted only when the difference is confined to a field that
+// relocation legitimately changes:
+//
+//   - B/BL displacement, when the target lies outside the function on
+//     both sides and both sides resolve to the same symbol at the same
+//     offset
+//   - the PCALAU12I page immediate
+//   - the signed 12-bit immediate of an ADDI.D or load/store based on
+//     a PCALAU12I register, when the combined address resolves to the
+//     same data symbol and offset on both sides
+//
+// Anything else — including any other use of a PCALAU12I-based
+// register, whose address semantics this fast path cannot follow —
+// fails, leaving the decision to full analysis.
+func relocOnlyLoong64(oldCode, newCode []byte, oldAddr, newAddr uint64,
+	oldSym, newSym SymLookup, oldData, newData DataLookup) bool {
+	// tracked marks registers holding a PCALAU12I page address;
+	// oldPage and newPage hold that page per side.
+	var tracked uint32
+	var oldPage, newPage [32]uint64
+
+	n := len(oldCode) &^ 3
+	for i := 0; i < n; i += 4 {
+		o := binary.LittleEndian.Uint32(oldCode[i:])
+		w := binary.LittleEndian.Uint32(newCode[i:])
+		rj := o >> 5 & 0x1F
+
+		switch {
+		case o&loongPCMask == loongPCALA && w&loongPCMask == loongPCALA && o&0x1F == w&0x1F:
+			// R0 is the hardwired zero register: a PCALAU12I writing
+			// it materializes nothing, and instructions reading R0
+			// afterwards read a constant zero, not the page.
+			if rd := o & 0x1F; rd != 0 {
+				oldPage[rd] = pcalaTarget(o, oldAddr+uint64(i))
+				newPage[rd] = pcalaTarget(w, newAddr+uint64(i))
+				tracked |= 1 << rd
+			}
+			continue
+
+		case o == w && tracked&(1<<rj) == 0:
+			// Identical and independent of any page register.
+
+		case o&loongBMask == loongB && w&loongBMask == loongB,
+			o&loongBMask == loongBL && w&loongBMask == loongBL:
+			oldTarget := branch26Target(o, oldAddr, uint64(i))
+			newTarget := branch26Target(w, newAddr, uint64(i))
+			intraOld := within(oldTarget, oldAddr, uint64(len(oldCode)))
+			intraNew := within(newTarget, newAddr, uint64(len(oldCode)))
+			if intraOld || intraNew {
+				if o != w || !intraOld || !intraNew {
+					return false // retargeted intra-function branch
+				}
+				break
+			}
+			oldName, oldBase := oldSym(oldTarget)
+			newName, newBase := newSym(newTarget)
+			if oldName == "" || oldName != newName ||
+				oldTarget-oldBase != newTarget-newBase {
+				return false // different callee
+			}
+
+		case o&^uint32(loongSi12) == w&^uint32(loongSi12) && tracked&(1<<rj) != 0 &&
+			o&loongAddMask == loongAdd && w&loongAddMask == loongAdd:
+			if !sameData(oldPage[rj]+uint64(signExt(o>>10&0xFFF, 12)),
+				newPage[rj]+uint64(signExt(w>>10&0xFFF, 12)),
+				oldData, newData) {
+				return false
+			}
+
+		case o&^uint32(loongSi12) == w&^uint32(loongSi12) && tracked&(1<<rj) != 0 &&
+			o&loongLdStMask == loongLdSt:
+			if !sameData(oldPage[rj]+uint64(signExt(o>>10&0xFFF, 12)),
+				newPage[rj]+uint64(signExt(w>>10&0xFFF, 12)),
+				oldData, newData) {
+				return false
+			}
+
+		default:
+			// Real change, or a PCALAU12I-based access this fast
+			// path cannot resolve.
+			return false
+		}
+
+		// Any non-PCALAU12I instruction naming a page register in
+		// its rd field invalidates it. Stores name a source there;
+		// over-clearing only costs precision.
+		tracked &^= 1 << (o & 0x1F)
+	}
+	// A trailing partial word must match exactly.
+	for i := n; i < len(oldCode); i++ {
+		if oldCode[i] != newCode[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// pcalaTarget computes the page address produced by a PCALAU12I word
+// at pc.
+func pcalaTarget(word uint32, pc uint64) uint64 {
+	return pc&^0xFFF + uint64(signExt(word>>5&0xFFFFF, 20)<<12)
+}
+
+// branch26Target computes the absolute target of the loong64 B/BL
+// word at offset off. The signed 26-bit word offset is stored split:
+// its low 16 bits in instruction bits 25:10, its high 10 bits in 9:0.
+func branch26Target(word uint32, funcAddr, off uint64) uint64 {
+	imm := signExt(word&0x3FF<<16|word>>10&0xFFFF, 26)
+	return funcAddr + off + uint64(imm*4)
+}
+
+// signExt sign-extends the low bits of v.
+func signExt(v uint32, bits uint) int64 {
+	shift := 64 - bits
+	return int64(uint64(v)<<shift) >> shift
 }
 
 // adrpTarget computes the page address produced by an ADRP word at pc.

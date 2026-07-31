@@ -308,6 +308,157 @@ func TestRelocOnly_RISCV64(t *testing.T) {
 	}
 }
 
+func TestRelocOnly_Loong64(t *testing.T) {
+	const (
+		loRet = 0x4C000020 // JIRL R0, R1, 0
+		loNop = 0x03400000 // ANDI R0, R0, 0
+		loOri = 0x03800404 // ORI R4, R0, 1
+	)
+	// b26 encodes B/BL: the 26-bit word offset is stored split, low 16
+	// bits in instruction bits 25:10, high 10 bits in 9:0.
+	b26 := func(opcode uint32, off int32) uint32 {
+		imm := uint32(off/4) & 0x03FFFFFF
+		return opcode | imm&0xFFFF<<10 | imm>>16
+	}
+	bl := func(off int32) uint32 { return b26(0x54000000, off) }
+	b := func(off int32) uint32 { return b26(0x50000000, off) }
+	pcala := func(page, rd uint32) uint32 { return 0x1A000000 | page&0xFFFFF<<5 | rd }
+	addi := func(imm, rj, rd uint32) uint32 { return 0x02C00000 | imm&0xFFF<<10 | rj<<5 | rd }
+	ld := func(imm, rj, rd uint32) uint32 { return 0x28C00000 | imm&0xFFF<<10 | rj<<5 | rd }
+
+	// Symbol and data layout mirrors the arm64 test: callee at
+	// 0x11000/0x22000, otherFn at 0x13000/0x24000, globalA at
+	// 0x15000/0x26000, globalB at 0x15100/0x26100; the function
+	// starts at 0x10000/0x20000.
+	oldSym := func(addr uint64) (string, uint64) {
+		switch {
+		case addr >= 0x11000 && addr < 0x12000:
+			return "callee", 0x11000
+		case addr >= 0x13000 && addr < 0x14000:
+			return "otherFn", 0x13000
+		}
+		return "", 0
+	}
+	newSym := func(addr uint64) (string, uint64) {
+		switch {
+		case addr >= 0x22000 && addr < 0x23000:
+			return "callee", 0x22000
+		case addr >= 0x24000 && addr < 0x25000:
+			return "otherFn", 0x24000
+		}
+		return "", 0
+	}
+	oldData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x15000 && addr < 0x15100:
+			return "globalA", 0x15000, 0x100
+		case addr >= 0x15100 && addr < 0x15200:
+			return "globalB", 0x15100, 0x100
+		}
+		return "", 0, 0
+	}
+	newData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x26000 && addr < 0x26100:
+			return "globalA", 0x26000, 0x100
+		case addr >= 0x26100 && addr < 0x26200:
+			return "globalB", 0x26100, 0x100
+		}
+		return "", 0, 0
+	}
+
+	tests := []struct {
+		name     string
+		old, new []uint32
+		want     bool
+	}{
+		{
+			name: "identical",
+			old:  []uint32{loOri, loRet},
+			new:  []uint32{loOri, loRet},
+			want: true,
+		},
+		{
+			// old: 0x10000 -> 0x11000 (callee), new: 0x20000 -> 0x22000 (callee)
+			name: "same callee at shifted address",
+			old:  []uint32{bl(0x1000), loRet},
+			new:  []uint32{bl(0x2000), loRet},
+			want: true,
+		},
+		{
+			// old calls callee, new calls otherFn: a real change.
+			name: "retargeted call",
+			old:  []uint32{bl(0x1000), loRet},
+			new:  []uint32{bl(0x4000), loRet},
+			want: false,
+		},
+		{
+			name: "intra-function branch retargeted",
+			old:  []uint32{b(4), loNop, loRet},
+			new:  []uint32{b(8), loNop, loRet},
+			want: false,
+		},
+		{
+			// old: page 0x15000 + 0x40 = globalA+0x40; new: page
+			// 0x26000 + 0x40 = globalA+0x40. Same symbol, moved.
+			name: "pcalau12i data ref moved with same symbol",
+			old:  []uint32{pcala(5, 27), addi(0x40, 27, 4), loRet},
+			new:  []uint32{pcala(6, 27), addi(0x40, 27, 4), loRet},
+			want: true,
+		},
+		{
+			// The same page pair completed by a load instead of an add.
+			name: "pcalau12i load moved with same symbol",
+			old:  []uint32{pcala(5, 27), ld(0x40, 27, 4), loRet},
+			new:  []uint32{pcala(6, 27), ld(0x40, 27, 4), loRet},
+			want: true,
+		},
+		{
+			// old resolves globalA+0x40, new globalB+0x40: a load
+			// switched to a different global is a real change.
+			name: "pcalau12i data ref switched to different global",
+			old:  []uint32{pcala(5, 27), addi(0x40, 27, 4), loRet},
+			new:  []uint32{pcala(6, 27), addi(0x140, 27, 4), loRet},
+			want: false,
+		},
+		{
+			// Identical words, but the same numeric page resolves to
+			// different symbols per side: still a real change.
+			name: "identical pcalau12i words different symbol",
+			old:  []uint32{pcala(5, 27), addi(0x140, 27, 4), loRet},
+			new:  []uint32{pcala(5, 27), addi(0x140, 27, 4), loRet},
+			want: false,
+		},
+		{
+			name: "add immediate differs without pcalau12i base",
+			old:  []uint32{addi(0x123, 1, 4), loRet},
+			new:  []uint32{addi(0x456, 1, 4), loRet},
+			want: false,
+		},
+		{
+			name: "real instruction change",
+			old:  []uint32{loOri, loRet},
+			new:  []uint32{loNop, loRet},
+			want: false,
+		},
+		{
+			name: "length mismatch",
+			old:  []uint32{loRet},
+			new:  []uint32{loNop, loRet},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := disasm.RelocOnly(objfile.ArchLoong64,
+				words(tt.old...), words(tt.new...), 0x10000, 0x20000, oldSym, newSym, oldData, newData)
+			if got != tt.want {
+				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRelocOnly_AMD64(t *testing.T) {
 	// Symbol layout mirrors the arm64 test: callee at 0x11000 (old)
 	// and 0x22000 (new), otherFn at 0x13000/0x24000; functions start

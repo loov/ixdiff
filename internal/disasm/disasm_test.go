@@ -136,6 +136,23 @@ func TestDecode_RISCV64_KnownBytes(t *testing.T) {
 	}
 }
 
+func TestDecode_Loong64_KnownBytes(t *testing.T) {
+	code := []byte{
+		0x65, 0xe0, 0xc0, 0x02, // ADDV $56, R3, R5
+		0x20, 0x00, 0x00, 0x4c, // RET (JIRL R0, R1, 0)
+	}
+	insts, err := disasm.Decode(objfile.ArchLoong64, code, 0x1000, nil)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got, want := strings.Join(opList(insts), " "), "ADDI.D JIRL"; got != want {
+		t.Errorf("ops = %q, want %q", got, want)
+	}
+	if insts[1].Text != "RET" {
+		t.Errorf("text = %q, want RET", insts[1].Text)
+	}
+}
+
 func TestDecode_RealFunction(t *testing.T) {
 	tests := []struct {
 		name string
@@ -148,6 +165,7 @@ func TestDecode_RealFunction(t *testing.T) {
 		{"ppc64", testbin.Config{GOOS: "linux", GOARCH: "ppc64"}},
 		{"ppc64le", testbin.Config{GOOS: "linux", GOARCH: "ppc64le"}},
 		{"riscv64", testbin.Config{GOOS: "linux", GOARCH: "riscv64"}},
+		{"loong64", testbin.Config{GOOS: "linux", GOARCH: "loong64"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

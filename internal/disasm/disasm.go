@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"golang.org/x/arch/arm64/arm64asm"
+	"golang.org/x/arch/loong64/loong64asm"
 	"golang.org/x/arch/ppc64/ppc64asm"
 	"golang.org/x/arch/riscv64/riscv64asm"
 	"golang.org/x/arch/s390x/s390xasm"
@@ -52,6 +53,8 @@ func Decode(arch objfile.Arch, code []byte, addr uint64, lookup SymLookup) ([]In
 		return decodePPC64(code, addr, lookup, binary.LittleEndian), nil
 	case objfile.ArchRISCV64:
 		return decodeRISCV64(code, addr, lookup), nil
+	case objfile.ArchLoong64:
+		return decodeLoong64(code, addr, lookup), nil
 	default:
 		return nil, fmt.Errorf("unsupported architecture %v", arch)
 	}
@@ -177,6 +180,29 @@ func decodeRISCV64(code []byte, addr uint64, lookup SymLookup) []Inst {
 			Text: riscv64asm.GoSyntax(inst, addr, lookup, nil),
 		})
 		code, addr = code[inst.Len:], addr+uint64(inst.Len)
+	}
+	if len(code) > 0 {
+		insts = append(insts, byteInst(addr, code))
+	}
+	return insts
+}
+
+func decodeLoong64(code []byte, addr uint64, lookup SymLookup) []Inst {
+	insts := make([]Inst, 0, len(code)/4)
+	for len(code) >= 4 {
+		inst, err := loong64asm.Decode(code)
+		if err != nil {
+			insts = append(insts, byteInst(addr, code[:4]))
+			code, addr = code[4:], addr+4
+			continue
+		}
+		insts = append(insts, Inst{
+			Addr: addr,
+			Len:  4,
+			Op:   inst.Op.String(),
+			Text: loong64asm.GoSyntax(inst, addr, lookup),
+		})
+		code, addr = code[4:], addr+4
 	}
 	if len(code) > 0 {
 		insts = append(insts, byteInst(addr, code))

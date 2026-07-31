@@ -107,6 +107,31 @@ func TestNormalize_RISCV64Operands(t *testing.T) {
 	}
 }
 
+func TestNormalize_Loong64Operands(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x2000, Len: 4, Op: "PCALAU12I", Text: "PCALAU12I $247, R30"},
+		{Addr: 0x2004, Len: 4, Op: "LD.D", Text: "MOVV -1464(R30), R6"},
+		{Addr: 0x2008, Len: 4, Op: "PCALAU12I", Text: "PCALAU12I $22, R4"},
+		{Addr: 0x200c, Len: 4, Op: "ADDI.D", Text: "ADDV $1952, R4"},
+		{Addr: 0x2010, Len: 4, Op: "BEQ", Text: "BEQ R20, 2(PC)"},
+		{Addr: 0x2014, Len: 4, Op: "ADDI.D", Text: "ADDV $8, R8, R4"},
+		{Addr: 0x2018, Len: 4, Op: "JIRL", Text: "RET"},
+	}
+	want := []string{
+		"PCALAU12I $<page>, R30",
+		"MOVV <lo12>(R30), R6", // load off a page register masked
+		"PCALAU12I $<page>, R4",
+		"ADDV $<lo12>, R4", // two-operand add completing the pair
+		"BEQ R20, L1",
+		"ADDV $8, R8, R4", // ordinary add kept
+		"RET",
+	}
+	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestNormalize_LabelsStableUnderInsertion checks that inserting an
 // instruction that is not a branch target does not renumber labels:
 // numbering follows target order, not instruction index.
@@ -212,7 +237,7 @@ func TestNormalize_MaskSP(t *testing.T) {
 // amd64 IP-relative form and the arm64 ADRP+low12 pair (which also
 // validates the ADRP page computation against GoSyntax output).
 func TestNormalize_ResolvesDataSymbols(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "riscv64", "ppc64", "ppc64le"} {
+	for _, arch := range []string{"amd64", "arm64", "riscv64", "loong64", "ppc64", "ppc64le"} {
 		t.Run(arch, func(t *testing.T) {
 			bin, err := objfile.Open(testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch}))
 			if err != nil {
@@ -244,7 +269,7 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 // with different ldflags shifts symbol addresses without changing
 // function bodies.
 func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "riscv64", "s390x", "ppc64", "ppc64le"} {
+	for _, arch := range []string{"amd64", "arm64", "riscv64", "loong64", "s390x", "ppc64", "ppc64le"} {
 		t.Run(arch, func(t *testing.T) {
 			pathA := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch})
 			pathB := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch, Tags: "pad"})

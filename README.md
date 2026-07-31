@@ -121,10 +121,10 @@ those are the differences an optimization comparison is looking for.
 ## Limitations
 
 - Instruction-level masking exists for amd64, arm64, 386, riscv64,
-  s390x, and ppc64/ppc64le only; other architectures are unsupported.
-  On s390x, pc-relative data references (`larl` and friends) are
-  always masked rather than resolved to symbol names, and the
-  relocation-only fast path does not apply.
+  loong64, s390x, and ppc64/ppc64le only; other architectures are
+  unsupported. On s390x, pc-relative data references (`larl` and
+  friends) are always masked rather than resolved to symbol names,
+  and the relocation-only fast path does not apply.
 - Non-Go binaries work only as well as their symbol tables; duplicate
   static symbols (cgo) keep the last definition.
 - The pclntab header magic list needs an update when a new Go release

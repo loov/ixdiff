@@ -111,3 +111,18 @@ func TestOpen_ELF_RISCV64(t *testing.T) {
 		t.Error("main.main not found")
 	}
 }
+
+func TestOpen_ELF_Loong64(t *testing.T) {
+	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "loong64"})
+
+	bin, err := objfile.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if bin.Arch != objfile.ArchLoong64 {
+		t.Errorf("Arch = %v, want loong64", bin.Arch)
+	}
+	if bin.Funcs["main.main"] == nil {
+		t.Error("main.main not found")
+	}
+}
