@@ -31,9 +31,22 @@ var pclntabMagics = [][]byte{
 	{0xfa, 0xff, 0xff, 0xff, 0x00, 0x00}, // Go 1.16–1.17
 }
 
+// scanPclntab scans the contents of candidate sections for a pclntab
+// header and loads the first hit. It is the fallback for binaries
+// without a dedicated pclntab section: PE always, and ELF when the
+// system linker (cgo, external linking) merged the pclntab into
+// another data section.
+func (b *Binary) scanPclntab(sections ...[]byte) {
+	for _, data := range sections {
+		if tab := findPclntab(data); tab != nil {
+			b.loadGoFuncs(tab)
+			return
+		}
+	}
+}
+
 // findPclntab locates a pclntab inside data by scanning for its header:
 // a version magic followed by a plausible pc quantum and pointer size.
-// It is used for formats without a dedicated pclntab section (PE).
 func findPclntab(data []byte) []byte {
 	for _, magic := range pclntabMagics {
 		for off := 0; ; {

@@ -81,17 +81,14 @@ func openPE(r io.ReaderAt, data []byte) (*Binary, error) {
 	bin.finishData()
 
 	// PE has no pclntab section; scan the data sections for its header.
+	var candidates [][]byte
 	for _, name := range []string{".rdata", ".data"} {
-		sec := pf.Section(name)
-		if sec == nil {
-			continue
-		}
-		if data, err := sec.Data(); err == nil {
-			if tab := findPclntab(data); tab != nil {
-				bin.loadGoFuncs(tab)
-				break
+		if sec := pf.Section(name); sec != nil {
+			if data, err := sec.Data(); err == nil {
+				candidates = append(candidates, data)
 			}
 		}
 	}
+	bin.scanPclntab(candidates...)
 	return bin, nil
 }

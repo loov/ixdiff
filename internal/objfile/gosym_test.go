@@ -1,6 +1,9 @@
 package objfile_test
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/loov/ixdiff/internal/objfile"
@@ -35,6 +38,42 @@ func TestOpen_StrippedBinaries_StillFindFunctions(t *testing.T) {
 				t.Errorf("len(Code()) = %d, want Size = %d", got, fn.Size)
 			}
 		})
+	}
+}
+
+// TestOpen_ELFWithoutPclntabSection_FindsFunctionsByScan checks that
+// function ranges are still recovered when the ELF has no .gopclntab
+// section, as with externally linked (cgo) binaries where the system
+// linker merges the pclntab into another data section. The fixture
+// simulates that layout by renaming the section in a stripped binary,
+// leaving the pclntab bytes findable only by scanning.
+func TestOpen_ELFWithoutPclntabSection_FindsFunctionsByScan(t *testing.T) {
+	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", LDFlags: "-s -w"})
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading fixture: %v", err)
+	}
+	i := bytes.Index(data, []byte(".gopclntab\x00"))
+	if i < 0 {
+		t.Fatal("fixture has no .gopclntab section name to rename")
+	}
+	data[i] = 'X'
+	patched := filepath.Join(t.TempDir(), "renamed.elf")
+	if err := os.WriteFile(patched, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	bin, err := objfile.Open(patched)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer bin.Close()
+	fn := bin.Funcs["main.main"]
+	if fn == nil {
+		t.Fatal("main.main not found without a .gopclntab section")
+	}
+	if fn.Size == 0 || fn.Size > 1<<20 {
+		t.Errorf("main.main size = %d, out of sane range", fn.Size)
 	}
 }
 

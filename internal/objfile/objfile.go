@@ -216,13 +216,24 @@ func openELF(r io.ReaderAt, data []byte) (*Binary, error) {
 	}
 	bin.finishData()
 
-	// ponytail: externally linked Go binaries store the pclntab in
-	// .data.rel.ro without its own section; add a findPclntab scan
-	// over data sections if such binaries turn up.
 	if sec := ef.Section(".gopclntab"); sec != nil {
 		if data, err := sec.Data(); err == nil {
 			bin.loadGoFuncs(data)
 		}
+	} else {
+		// The system linker (cgo, external linking) emits no
+		// dedicated section; the pclntab lands inside another data
+		// section, commonly .data.rel.ro. Scan them all.
+		var candidates [][]byte
+		for _, sec := range ef.Sections {
+			if sec.Type == elf.SHT_PROGBITS &&
+				sec.Flags&elf.SHF_ALLOC != 0 && sec.Flags&elf.SHF_EXECINSTR == 0 {
+				if data, err := sec.Data(); err == nil {
+					candidates = append(candidates, data)
+				}
+			}
+		}
+		bin.scanPclntab(candidates...)
 	}
 	return bin, nil
 }
