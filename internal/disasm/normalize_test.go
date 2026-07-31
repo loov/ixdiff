@@ -359,5 +359,7 @@ func normalized(t *testing.T, bin *objfile.Binary, fn *objfile.Func) []string {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	return disasm.Normalize(fn.Name, insts, disasm.Options{IsAddr: bin.Contains})
+	// DataSym matters: report.go always sets it, so the stability
+	// property must hold with symbol resolution enabled.
+	return disasm.Normalize(fn.Name, insts, disasm.Options{IsAddr: bin.Contains, DataSym: bin.DataSym})
 }

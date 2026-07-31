@@ -17,7 +17,10 @@ import (
 // and is allowed. This harness caught the zero-displacement <lo12>
 // masking bug.
 func TestRelocOnly_NeverContradictsFullAnalysis(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "arm", "riscv64", "loong64", "386", "s390x", "ppc64", "ppc64le"} {
+	// Only arches with a RelocOnly fast path (see the switch in
+	// internal/disasm/reloc.go). s390x, ppc64, and ppc64le have none,
+	// so running them here would assert nothing.
+	for _, arch := range []string{"amd64", "arm64", "arm", "riscv64", "loong64", "386"} {
 		for _, variant := range []testbin.Config{
 			{GOOS: "linux", GOARCH: arch, GCFlags: "-l"},
 			{GOOS: "linux", GOARCH: arch, Tags: "pad"},
@@ -73,13 +76,7 @@ func TestWasm_PadShiftIsPureNoise(t *testing.T) {
 			noisy++
 			continue
 		}
-		for i := range oldLines {
-			if oldLines[i] != newLines[i] {
-				t.Errorf("%s: normalized lines differ at %d:\n  old %q\n  new %q",
-					p.Name, i, oldLines[i], newLines[i])
-				break
-			}
-		}
+		reportLineDiff(t, p.Name+": normalized lines differ", oldLines, newLines)
 	}
 	if changed == 0 {
 		t.Fatal("padding did not change any pair, test would be vacuous")
@@ -116,14 +113,25 @@ func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) {
 			disasm.NormalizeLines(p.New.Name, newInsts, disasm.Options{IsAddr: new.Contains, DataSym: new.DataSym}))
 		if !slices.Equal(oldLines, newLines) {
 			contradictions++
-			for i := range oldLines {
-				if oldLines[i] != newLines[i] {
-					t.Errorf("%s: fast path claims noise, full path disagrees at line %d:\n  old %q\n  new %q",
-						p.Name, i, oldLines[i], newLines[i])
-					break
-				}
-			}
+			reportLineDiff(t, p.Name+": fast path claims noise, full path disagrees", oldLines, newLines)
 		}
 	}
+	if fast == 0 {
+		t.Errorf("fast path never fired; test is vacuous")
+	}
 	t.Logf("fast path fired on %d changed pairs, %d contradictions", fast, contradictions)
+}
+
+// reportLineDiff reports the first differing line between two
+// normalized listings, tolerating different line counts: equal byte
+// length does not imply equal instruction count.
+func reportLineDiff(t *testing.T, msg string, oldLines, newLines []string) {
+	t.Helper()
+	for i := range min(len(oldLines), len(newLines)) {
+		if oldLines[i] != newLines[i] {
+			t.Errorf("%s at line %d:\n  old %q\n  new %q", msg, i, oldLines[i], newLines[i])
+			return
+		}
+	}
+	t.Errorf("%s: line counts differ (old %d, new %d)", msg, len(oldLines), len(newLines))
 }
