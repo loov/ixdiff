@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/loov/ixdiff/internal/fndiff"
+	"github.com/loov/ixdiff/internal/objfile"
 )
 
 // jsonSummary is the machine-readable form of the summary report.
@@ -59,8 +60,10 @@ var opNames = map[fndiff.Op]string{
 	fndiff.OpInsert: "insert",
 }
 
-// writeJSONSummary emits the summary report as one JSON object.
-func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, pairs []*fndiff.Pair, analyzed []*analysis) error {
+// writeJSONSummary emits the summary report as one JSON object. With
+// --all every ranked function carries its diff (changed) or full
+// listing (added, removed).
+func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, pairs []*fndiff.Pair, analyzed []*analysis, old, new *objfile.Binary) error {
 	byName := map[string]*analysis{}
 	noise := 0
 	totalOps := fndiff.OpCount{}
@@ -84,7 +87,14 @@ func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, pairs []*fndiff.Pai
 	ranked := rankPairs(pairs, instDelta, c.top, c.sortBy)
 	funcs := make([]jsonFuncReport, 0, len(ranked))
 	for _, p := range ranked {
-		funcs = append(funcs, funcReport(p, byName[p.Name], false))
+		a := byName[p.Name]
+		if c.all && (p.State == fndiff.StateAdded || p.State == fndiff.StateRemoved) {
+			var err error
+			if a, err = listing(p, old, new, c.norm()); err != nil {
+				return err
+			}
+		}
+		funcs = append(funcs, funcReport(p, a, c.all))
 	}
 
 	return encodeJSON(w, jsonSummary{

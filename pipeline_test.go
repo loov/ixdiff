@@ -104,6 +104,54 @@ func TestPipeline_SingleFunctionDiff(t *testing.T) {
 	}
 }
 
+// TestPipeline_AllAppendsRankedDiffs checks that --all follows the
+// summary with a diff section per ranked function: changed functions
+// get hunks, added ones a full listing, and the sections appear in
+// ranking-table order.
+func TestPipeline_AllAppendsRankedDiffs(t *testing.T) {
+	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
+	noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", GCFlags: "-l"})
+
+	out := run(t, "--all", base, noinline)
+	table := strings.Index(out, "top ")
+	if table < 0 {
+		t.Fatalf("missing ranking table:\n%s", out)
+	}
+	if !strings.Contains(out[table:], "--- main.main") || !strings.Contains(out, "@@ -") {
+		t.Errorf("expected main.main diff section after the summary:\n%s", out)
+	}
+	if !strings.Contains(out, "main.sum is added") {
+		t.Errorf("expected added-function listing section:\n%s", out)
+	}
+
+	// Sections follow the table order.
+	var tableOrder, sectionOrder []int
+	for _, name := range []string{"main.main", "main.sum"} {
+		tableOrder = append(tableOrder, strings.Index(out[table:], " "+name+"\n"))
+		sectionOrder = append(sectionOrder, strings.Index(out, "+++ "+name+" ("))
+	}
+	if (tableOrder[0] < tableOrder[1]) != (sectionOrder[0] < sectionOrder[1]) {
+		t.Errorf("section order does not match table order:\n%s", out)
+	}
+
+	// --all --json attaches the diff to every ranked function.
+	var report struct {
+		Functions []struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+			Diff  []any  `json:"diff"`
+		} `json:"functions"`
+	}
+	if err := json.Unmarshal([]byte(run(t, "--all", "--json", base, noinline)), &report); err != nil {
+		t.Fatalf("unmarshal --all --json: %v", err)
+	}
+	for _, fn := range report.Functions {
+		if len(fn.Diff) == 0 {
+			t.Errorf("ranked %s function %s has no diff in --all --json", fn.State, fn.Name)
+		}
+	}
+}
+
 func TestPipeline_MissingFunctionErrors(t *testing.T) {
 	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
 	var out strings.Builder

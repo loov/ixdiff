@@ -14,6 +14,7 @@ Flags:
         --json             emit machine-readable JSON instead of text
         --side-by-side     show function diffs as two columns
         --blocks           match basic blocks before diffing, tolerating block reordering
+        --all              follow the summary with a diff of every function in the ranking table
         --color string     colorize diffs: auto, always, or never (default "auto")
 
 Global flags:

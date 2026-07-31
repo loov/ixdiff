@@ -77,6 +77,7 @@ Other flags:
 | --- | --- |
 | `--top N`, `--sort size\|insts` | ranking table length and order |
 | `--filter net/url`, `--filter ~^runtime\.` | scope the summary by substring or regexp (repeatable) |
+| `--all` | follow the summary with a diff of every ranked function |
 | `--side-by-side` | two-column diff view |
 | `--blocks` | match basic blocks before diffing, tolerating block reordering |
 | `--mask-sp` | ignore stack-offset shifts caused by frame-size changes |

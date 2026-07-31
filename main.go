@@ -79,6 +79,7 @@ type cmdDiff struct {
 	json   bool
 	sideBy bool
 	blocks bool
+	all    bool
 	color  string
 	pal    palette
 
@@ -107,6 +108,8 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 	c.sideBy = params.Flag("side-by-side", "show function diffs as two columns", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 	c.blocks = params.Flag("blocks", "match basic blocks before diffing, tolerating block reordering", false,
+		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
+	c.all = params.Flag("all", "follow the summary with a diff of every function in the ranking table", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 	c.color = params.Flag("color", "colorize diffs: auto, always, or never", "auto").(string)
 
@@ -164,9 +167,46 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		return err
 	}
 	if c.json {
-		return c.writeJSONSummary(stdout, old.Arch.String(), pairs, analyzed)
+		return c.writeJSONSummary(stdout, old.Arch.String(), pairs, analyzed, old, new)
 	}
 	writeSummary(stdout, pairs, analyzed, c.top, c.sortBy)
+	if c.all {
+		return c.writeAll(stdout, pairs, analyzed, old, new)
+	}
+	return nil
+}
+
+// writeAll appends a diff section for every function in the ranking
+// table, in table order, so one invocation yields a complete report.
+func (c *cmdDiff) writeAll(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, old, new *objfile.Binary) error {
+	byName := make(map[string]*analysis, len(analyzed))
+	for _, a := range analyzed {
+		byName[a.pair.Name] = a
+	}
+	for _, p := range rankPairs(pairs, instDeltas(analyzed), c.top, c.sortBy) {
+		fmt.Fprintln(w)
+		a := byName[p.Name]
+		switch p.State {
+		case fndiff.StateChanged:
+			if c.blocks {
+				if err := writeFuncBlocks(w, p, old, new, c.norm(), c.pal); err != nil {
+					return err
+				}
+				continue
+			}
+		case fndiff.StateAdded, fndiff.StateRemoved:
+			fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta())
+			var err error
+			if a, err = listing(p, old, new, c.norm()); err != nil {
+				return err
+			}
+		}
+		if c.sideBy {
+			writeFuncDiffSide(w, a, c.pal)
+		} else {
+			writeFuncDiff(w, a, c.pal)
+		}
+	}
 	return nil
 }
 
