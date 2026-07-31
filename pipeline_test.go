@@ -32,6 +32,19 @@ func run(t *testing.T, args ...string) string {
 	return out.String()
 }
 
+// runErr executes the CLI with args and returns the resulting error.
+func runErr(t *testing.T, args ...string) error {
+	t.Helper()
+	_, err := clingy.Environment{
+		Name:   "ixdiff",
+		Root:   new(cmdDiff),
+		Args:   args,
+		Stdout: new(strings.Builder),
+		Stderr: new(strings.Builder),
+	}.Run(context.Background(), nil)
+	return err
+}
+
 // TestPipeline_InliningComparison is the end-to-end check: comparing a
 // default build against one with inlining disabled must attribute the
 // difference to changed functions and added CALLs.
@@ -275,6 +288,68 @@ func TestPipeline_MissingFunctionErrors(t *testing.T) {
 	}.Run(context.Background(), nil)
 	if err == nil {
 		t.Error("expected error for unknown function")
+	}
+}
+
+func TestPipeline_ArchitectureMismatchErrors(t *testing.T) {
+	amd64 := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
+	arm64 := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "arm64"})
+	err := runErr(t, amd64, arm64)
+	if err == nil || !strings.Contains(err.Error(), "architecture mismatch") {
+		t.Errorf("comparing amd64 to arm64: err = %v, want architecture mismatch", err)
+	}
+}
+
+func TestPipeline_UnknownColorModeErrors(t *testing.T) {
+	// The palette resolves before the binaries open, so dummy paths do.
+	if err := runErr(t, "--color", "bogus", "a", "b"); err == nil {
+		t.Error("expected error for --color bogus, got nil")
+	}
+}
+
+func TestPipeline_InvalidFilterRegexpErrors(t *testing.T) {
+	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
+	err := runErr(t, "--filter", "~[", base, base)
+	if err == nil || !strings.Contains(err.Error(), "invalid --filter") {
+		t.Errorf("--filter ~[: err = %v, want invalid --filter", err)
+	}
+}
+
+// TestPipeline_VersionFlagPrintsVersion covers the clingy --version
+// flag. The bare `ixdiff --version` shortcut lives in main() and is
+// not reachable from tests; this exercises the flag path it mirrors.
+func TestPipeline_VersionFlagPrintsVersion(t *testing.T) {
+	// Execute returns before opening the binaries, so dummy paths do.
+	out := run(t, "--version", "a", "b")
+	if strings.TrimSpace(out) == "" {
+		t.Error("--version printed nothing")
+	}
+}
+
+// TestPipeline_MultiArchSmoke runs the summary and a single-function
+// diff on every supported architecture, checking the whole pipeline
+// (open, decode, normalize, diff) holds together beyond amd64.
+func TestPipeline_MultiArchSmoke(t *testing.T) {
+	targets := []struct{ goos, goarch string }{
+		{"linux", "amd64"}, {"linux", "arm64"}, {"linux", "arm"},
+		{"linux", "386"}, {"linux", "riscv64"}, {"linux", "loong64"},
+		{"linux", "s390x"}, {"linux", "ppc64"}, {"linux", "ppc64le"},
+		{"wasip1", "wasm"},
+	}
+	for _, tt := range targets {
+		t.Run(tt.goarch, func(t *testing.T) {
+			base := testbin.Build(t, testbin.Config{GOOS: tt.goos, GOARCH: tt.goarch})
+			noinline := testbin.Build(t, testbin.Config{GOOS: tt.goos, GOARCH: tt.goarch, GCFlags: "-l"})
+
+			summary := run(t, base, noinline)
+			if !strings.Contains(summary, "changed") || !strings.Contains(summary, "total text size delta:") {
+				t.Errorf("implausible summary:\n%s", summary)
+			}
+			fn := run(t, "--fn", "main.main", base, noinline)
+			if !strings.Contains(fn, "@@ -") {
+				t.Errorf("main.main diff has no hunks:\n%s", fn)
+			}
+		})
 	}
 }
 

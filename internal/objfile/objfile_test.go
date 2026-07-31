@@ -3,7 +3,10 @@ package objfile_test
 import (
 	"bytes"
 	"debug/elf"
+	"encoding/binary"
 	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/loov/ixdiff/internal/objfile"
@@ -33,6 +36,45 @@ func TestOpen_ELF_FindsFunctions(t *testing.T) {
 	}
 	if got := uint64(len(fn.Code())); got != fn.Size {
 		t.Errorf("len(Code()) = %d, want Size = %d", got, fn.Size)
+	}
+}
+
+// TestOpen_HostileInputs_ErrorNotPanic feeds Open corrupt and
+// unsupported files: each must produce an error, never a panic or a
+// half-parsed Binary.
+func TestOpen_HostileInputs_ErrorNotPanic(t *testing.T) {
+	elfData, err := os.ReadFile(testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// e_machine is the little-endian uint16 at offset 18 of the ELF
+	// header; 0xffff is not a machine any parser supports.
+	badMachine := slices.Clone(elfData)
+	binary.LittleEndian.PutUint16(badMachine[18:], 0xffff)
+
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"too short", []byte{0x7f, 'E'}},
+		{"not a binary", []byte("plain text, not an executable\n")},
+		{"unsupported ELF machine", badMachine},
+		{"truncated ELF", elfData[:len(elfData)*2/5]},
+		// A code section declaring 32 payload bytes that are missing.
+		{"wasm truncated section header", []byte("\x00asm\x01\x00\x00\x00\x0a\x20")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "hostile.bin")
+			if err := os.WriteFile(path, tt.data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			bin, err := objfile.Open(path)
+			if err == nil {
+				bin.Close()
+				t.Fatal("Open succeeded on hostile input")
+			}
+		})
 	}
 }
 

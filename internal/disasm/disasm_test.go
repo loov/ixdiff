@@ -25,6 +25,12 @@ func TestDecode_AMD64_KnownBytes(t *testing.T) {
 	}
 }
 
+func TestDecode_UnknownArch_Errors(t *testing.T) {
+	if _, err := disasm.Decode(objfile.ArchUnknown, []byte{0xc3}, 0, nil); err == nil {
+		t.Error("Decode(ArchUnknown) succeeded, want error")
+	}
+}
+
 func TestDecode_AMD64_UndecodableBytesBecomeBYTE(t *testing.T) {
 	code := []byte{0xc3, 0x0f, 0xff} // RET followed by junk
 	insts, err := disasm.Decode(objfile.ArchAMD64, code, 0, nil)
