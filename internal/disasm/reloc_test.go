@@ -714,7 +714,26 @@ func TestRelocOnly_AMD64(t *testing.T) {
 		}
 		return "", 0
 	}
-	noData := func(uint64) (string, uint64, uint64) { return "", 0, 0 }
+	// Data layout mirrors the arm64 test: globalA at 0x15000/0x26000,
+	// globalB at 0x15100/0x26100.
+	oldData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x15000 && addr < 0x15100:
+			return "globalA", 0x15000, 0x100
+		case addr >= 0x15100 && addr < 0x15200:
+			return "globalB", 0x15100, 0x100
+		}
+		return "", 0, 0
+	}
+	newData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x26000 && addr < 0x26100:
+			return "globalA", 0x26000, 0x100
+		case addr >= 0x26100 && addr < 0x26200:
+			return "globalB", 0x26100, 0x100
+		}
+		return "", 0, 0
+	}
 
 	// call rel32 encodes CALL with a little-endian displacement from
 	// the end of the 5-byte instruction.
@@ -723,6 +742,9 @@ func TestRelocOnly_AMD64(t *testing.T) {
 	}
 	lea := func(disp int32) []byte { // LEAQ disp(IP), AX
 		return []byte{0x48, 0x8d, 0x05, byte(disp), byte(disp >> 8), byte(disp >> 16), byte(disp >> 24)}
+	}
+	mov := func(disp int32) []byte { // MOVQ disp(IP), AX
+		return []byte{0x48, 0x8b, 0x05, byte(disp), byte(disp >> 8), byte(disp >> 16), byte(disp >> 24)}
 	}
 	ret := []byte{0xc3}
 	cat := func(bs ...[]byte) []byte { return bytes.Join(bs, nil) }
@@ -747,11 +769,44 @@ func TestRelocOnly_AMD64(t *testing.T) {
 			want: false,
 		},
 		{
-			// Unresolved RIP-relative data on both sides masks alike.
-			name: "rip-relative displacement differs",
+			// Neither target resolves as text or data: both sides
+			// mask alike.
+			name: "rip-relative displacement differs unresolved",
 			old:  cat(lea(0x100), ret),
 			new:  cat(lea(0x200), ret),
 			want: true,
+		},
+		{
+			// old: 0x10007+0xff9 = 0x11000 (callee); new: 0x20007+0x1ff9
+			// = 0x22000. A function reference moved with the layout.
+			name: "rip-relative lea to same function at shifted address",
+			old:  cat(lea(0xff9), ret),
+			new:  cat(lea(0x1ff9), ret),
+			want: true,
+		},
+		{
+			// new references otherFn at 0x24000 instead: a defer/go/
+			// func-value retargeted to a different function.
+			name: "rip-relative lea retargeted to different function",
+			old:  cat(lea(0xff9), ret),
+			new:  cat(lea(0x3ff9), ret),
+			want: false,
+		},
+		{
+			// old: 0x10007+0x5039 = globalA+0x40; new: 0x20007+0x6039
+			// = globalA+0x40 at its shifted address.
+			name: "rip-relative load same global at shifted address",
+			old:  cat(mov(0x5039), ret),
+			new:  cat(mov(0x6039), ret),
+			want: true,
+		},
+		{
+			// old resolves globalA+0x40, new globalB+0x40: a load
+			// switched to a different global is a real change.
+			name: "rip-relative load switched to different global",
+			old:  cat(mov(0x5039), ret),
+			new:  cat(mov(0x6139), ret),
+			want: false,
 		},
 		{
 			// MOVL $1 vs $2: a real immediate change.
@@ -764,7 +819,7 @@ func TestRelocOnly_AMD64(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := disasm.RelocOnly(objfile.ArchAMD64, tt.old, tt.new,
-				0x10000, 0x20000, oldSym, newSym, noData, noData)
+				0x10000, 0x20000, oldSym, newSym, oldData, newData)
 			if got != tt.want {
 				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
 			}

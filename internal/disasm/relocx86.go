@@ -14,10 +14,11 @@ import (
 //     the same symbol at the same offset on both sides (equal
 //     displacements still resolve, since equal bytes at different
 //     addresses can reach different symbols)
-//   - a RIP-relative memory displacement whose targets render
-//     identically under the data-reference rules (amd64 only; 386 has
-//     no IP-relative addressing, so its absolute data references fail
-//     here and fall back to full analysis)
+//   - a RIP-relative memory displacement whose targets resolve to the
+//     same text symbol at the same offset, or, when neither side is a
+//     text symbol, render identically under the data-reference rules
+//     (amd64 only; 386 has no IP-relative addressing, so its absolute
+//     data references fail here and fall back to full analysis)
 //
 // Differing immediates, registers, or opcodes fail, as does anything
 // that does not decode; full analysis then decides. mode is the x86asm
@@ -81,8 +82,22 @@ func relocOnlyX86(oldCode, newCode []byte, oldAddr, newAddr uint64,
 						return false
 					}
 					end := uint64(off + oi.Len)
-					if !sameData(oldAddr+end+uint64(oarg.Disp), newAddr+end+uint64(narg.Disp),
-						oldData, newData) {
+					oldTarget := oldAddr + end + uint64(oarg.Disp)
+					newTarget := newAddr + end + uint64(narg.Disp)
+					// The compiler also emits RIP-relative references
+					// to functions (defer wrappers, func values); those
+					// never resolve as data, so a text symbol on either
+					// side must match name and offset on both.
+					oldName, oldBase := oldSym(oldTarget)
+					newName, newBase := newSym(newTarget)
+					if oldName != "" || newName != "" {
+						if oldName != newName ||
+							oldTarget-oldBase != newTarget-newBase {
+							return false
+						}
+						continue
+					}
+					if !sameData(oldTarget, newTarget, oldData, newData) {
 						return false
 					}
 					continue

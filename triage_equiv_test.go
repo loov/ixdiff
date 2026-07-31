@@ -34,7 +34,9 @@ func TestRelocOnly_NeverContradictsFullAnalysis(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Open variant: %v", err)
 				}
-				checkTriageEquivalence(t, base, other)
+				if fired := checkTriageEquivalence(t, base, other); fired == 0 {
+					t.Error("fast path never fired, harness is vacuous for this arch")
+				}
 			})
 		}
 	}
@@ -85,8 +87,8 @@ func TestWasm_PadShiftIsPureNoise(t *testing.T) {
 }
 
 // checkTriageEquivalence verifies the property over every changed pair
-// of two binaries and reports how often the fast path fired.
-func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) {
+// of two binaries and returns how often the fast path fired.
+func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) int {
 	t.Helper()
 	oldLookup, newLookup := disasm.Lookup(old), disasm.Lookup(new)
 	fast, contradictions := 0, 0
@@ -116,10 +118,8 @@ func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) {
 			reportLineDiff(t, p.Name+": fast path claims noise, full path disagrees", oldLines, newLines)
 		}
 	}
-	if fast == 0 {
-		t.Errorf("fast path never fired; test is vacuous")
-	}
 	t.Logf("fast path fired on %d changed pairs, %d contradictions", fast, contradictions)
+	return fast
 }
 
 // reportLineDiff reports the first differing line between two
