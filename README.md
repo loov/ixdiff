@@ -4,12 +4,6 @@ ixdiff compares the assembly of two binaries to show how compiler or
 build-flag changes affected the generated code: which functions
 changed, by how much, and what the instruction-level differences are.
 
-It parses and disassembles entirely in Go (`debug/elf`, `debug/macho`,
-`debug/pe`, `golang.org/x/arch`) — no objdump, so comparing large
-binaries takes well under a second per 100MB. ELF, Mach-O, and PE on
-amd64 and arm64 are supported; Go binaries get exact function ranges
-from the pclntab even when stripped.
-
 ## Install
 
 ```sh
@@ -70,6 +64,21 @@ $ ixdiff --fn net/url.parseHost tsgo.v0 tsgo.v3
 Every line carries the address of the instruction it came from, so
 lines can be cross-referenced with objdump or profiler output. Added
 and removed functions print their full listing.
+
+The same diff as two columns, old on the left and new on the right:
+
+```console
+$ ixdiff --side-by-side --fn net/url.parseHost tsgo.v0 tsgo.v3
+--- net/url.parseHost (1888 bytes)
++++ net/url.parseHost (1904 bytes)
+@@ -10046b65c +10046c8ac @@
+10046b65c: ADD  $240, RSP, R2    10046c8ac: ADD  $240, RSP, R2
+10046b660: ORR  $1, ZR, R3       10046c8b0: ORR  $1, ZR, R3
+10046b664: MOVD R3, R4           10046c8b4: MOVD R3, R4
+                               > 10046c8b8: ORR  $14, ZR, R5
+10046b668: CALL fmt.errorf(SB)   10046c8bc: CALL fmt.errorf(SB)
+10046b66c: CBNZ R0, L22          10046c8c0: CBNZ R0, L22
+```
 
 Other flags:
 
