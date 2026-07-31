@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"golang.org/x/arch/arm/armasm"
 	"golang.org/x/arch/arm64/arm64asm"
@@ -18,6 +19,14 @@ import (
 
 	"github.com/loov/ixdiff/internal/objfile"
 )
+
+// decodeMu serializes calls into the x/arch decoders that are not
+// goroutine-safe: arm64asm, armasm, riscv64asm, loong64asm, s390xasm,
+// and ppc64asm all mutate a package-level decoderCover slice on every
+// Decode (armasm, s390xasm, and ppc64asm even allocate it lazily
+// inside Decode). Only x86asm guards the write, so the x86 path stays
+// lock-free.
+var decodeMu sync.Mutex
 
 // Inst is a single decoded instruction.
 type Inst struct {
@@ -91,6 +100,9 @@ func decodeX86(code []byte, addr uint64, lookup SymLookup, mode int) []Inst {
 }
 
 func decodeARM64(code []byte, addr uint64, lookup SymLookup) []Inst {
+	decodeMu.Lock()
+	defer decodeMu.Unlock()
+
 	insts := make([]Inst, 0, len(code)/4)
 	for len(code) >= 4 {
 		inst, err := arm64asm.Decode(code)
@@ -118,6 +130,9 @@ func decodeARM64(code []byte, addr uint64, lookup SymLookup) []Inst {
 // GoSyntax rewrites raw opcodes into Go assembler names (BRASL
 // becomes CALL, BCR 15 becomes RET).
 func decodeS390X(code []byte, addr uint64, lookup SymLookup) []Inst {
+	decodeMu.Lock()
+	defer decodeMu.Unlock()
+
 	insts := make([]Inst, 0, len(code)/4)
 	for len(code) >= 2 {
 		inst, err := s390xasm.Decode(code)
@@ -143,6 +158,9 @@ func decodeS390X(code []byte, addr uint64, lookup SymLookup) []Inst {
 }
 
 func decodePPC64(code []byte, addr uint64, lookup SymLookup, ord binary.ByteOrder) []Inst {
+	decodeMu.Lock()
+	defer decodeMu.Unlock()
+
 	insts := make([]Inst, 0, len(code)/4)
 	for len(code) >= 4 {
 		inst, err := ppc64asm.Decode(code, ord)
@@ -171,6 +189,9 @@ func decodePPC64(code []byte, addr uint64, lookup SymLookup, ord binary.ByteOrde
 }
 
 func decodeRISCV64(code []byte, addr uint64, lookup SymLookup) []Inst {
+	decodeMu.Lock()
+	defer decodeMu.Unlock()
+
 	insts := make([]Inst, 0, len(code)/4)
 	// Instructions are 4 bytes, or 2 with the compressed extension;
 	// undecodable input advances by the 2-byte minimum unit so a
@@ -197,6 +218,9 @@ func decodeRISCV64(code []byte, addr uint64, lookup SymLookup) []Inst {
 }
 
 func decodeLoong64(code []byte, addr uint64, lookup SymLookup) []Inst {
+	decodeMu.Lock()
+	defer decodeMu.Unlock()
+
 	insts := make([]Inst, 0, len(code)/4)
 	for len(code) >= 4 {
 		inst, err := loong64asm.Decode(code)
@@ -224,6 +248,9 @@ func decodeLoong64(code []byte, addr uint64, lookup SymLookup) []Inst {
 // pools interleaved with the code; they become WORD pseudo-instructions
 // instead of being misdecoded as instructions.
 func decodeARM(code []byte, addr uint64, lookup SymLookup) []Inst {
+	decodeMu.Lock()
+	defer decodeMu.Unlock()
+
 	pool := armPool(code)
 	text := &codeReader{code: code, addr: addr}
 	insts := make([]Inst, 0, len(code)/4)
