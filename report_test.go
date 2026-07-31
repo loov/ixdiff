@@ -180,8 +180,31 @@ func TestEmphasizeDiff_MarksOnlyChangedOperands(t *testing.T) {
 	if !ok {
 		t.Fatal("expected same-shape lines to emphasize")
 	}
-	wantOld := "MOVQ   R11, " + ansi.emph + "0x390(SP)" + ansi.unemph
-	wantNew := "MOVQ   R11, " + ansi.emph + "0x328(SP)" + ansi.unemph
+	wantOld := "MOVQ   R11, " + ansi.emph + "0x390" + ansi.unemph + "(SP)"
+	wantNew := "MOVQ   R11, " + ansi.emph + "0x328" + ansi.unemph + "(SP)"
+	if oldText != wantOld || newText != wantNew {
+		t.Errorf("got:\n%q\n%q\nwant:\n%q\n%q", oldText, newText, wantOld, wantNew)
+	}
+
+	// Within an operand only the differing sub-token is marked: a
+	// changed base register leaves the shared offset unemphasized.
+	oldText, newText, ok = ansi.emphasizeDiff("MOVD 8(R6), R6", "MOVD 8(R7), R7")
+	if !ok {
+		t.Fatal("expected same-shape lines to emphasize")
+	}
+	wantOld = "MOVD 8(" + ansi.emph + "R6" + ansi.unemph + "), " + ansi.emph + "R6" + ansi.unemph
+	wantNew = "MOVD 8(" + ansi.emph + "R7" + ansi.unemph + "), " + ansi.emph + "R7" + ansi.unemph
+	if oldText != wantOld || newText != wantNew {
+		t.Errorf("got:\n%q\n%q\nwant:\n%q\n%q", oldText, newText, wantOld, wantNew)
+	}
+
+	// Operands with different punctuation shapes are marked whole.
+	oldText, newText, ok = ansi.emphasizeDiff("MOVD 8(R6), R1", "MOVD $8, R1")
+	if !ok {
+		t.Fatal("expected same-shape lines to emphasize")
+	}
+	wantOld = "MOVD " + ansi.emph + "8(R6)" + ansi.unemph + ", R1"
+	wantNew = "MOVD " + ansi.emph + "$8" + ansi.unemph + ", R1"
 	if oldText != wantOld || newText != wantNew {
 		t.Errorf("got:\n%q\n%q\nwant:\n%q\n%q", oldText, newText, wantOld, wantNew)
 	}

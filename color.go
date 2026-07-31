@@ -82,10 +82,65 @@ func (pal palette) emphasizeDiff(oldText, newText string) (string, string, bool)
 	}
 	for i := range oldArgs {
 		if oldArgs[i] != newArgs[i] {
-			oldArgs[i] = pal.emph + oldArgs[i] + pal.unemph
-			newArgs[i] = pal.emph + newArgs[i] + pal.unemph
+			oldArgs[i], newArgs[i] = pal.emphasizeArg(oldArgs[i], newArgs[i])
 		}
 	}
 	prefix := oldOp + " " + oldRest[:pad]
 	return prefix + strings.Join(oldArgs, ", "), prefix + strings.Join(newArgs, ", "), true
+}
+
+// emphasizeArg emphasizes only the sub-tokens that differ between two
+// versions of one operand, so 8(R6) against 8(R7) marks just the
+// register and not the unchanged offset. Operands whose punctuation
+// shapes differ are emphasized whole.
+func (pal palette) emphasizeArg(old, new string) (string, string) {
+	oldToks, newToks := tokenizeArg(old), tokenizeArg(new)
+	same := len(oldToks) == len(newToks)
+	for i := 0; same && i < len(oldToks); i++ {
+		if oldToks[i] != newToks[i] && (!wordToken(oldToks[i]) || !wordToken(newToks[i])) {
+			same = false
+		}
+	}
+	if !same {
+		return pal.emph + old + pal.unemph, pal.emph + new + pal.unemph
+	}
+	var oldOut, newOut strings.Builder
+	for i := range oldToks {
+		if oldToks[i] == newToks[i] {
+			oldOut.WriteString(oldToks[i])
+			newOut.WriteString(newToks[i])
+		} else {
+			oldOut.WriteString(pal.emph + oldToks[i] + pal.unemph)
+			newOut.WriteString(pal.emph + newToks[i] + pal.unemph)
+		}
+	}
+	return oldOut.String(), newOut.String()
+}
+
+// wordChar reports whether c can appear in a register, number, or
+// symbol name inside an operand.
+func wordChar(c byte) bool {
+	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' ||
+		c == '_' || c == '.' || c == '$' || c == '-' || c == '#'
+}
+
+// wordToken reports whether tok is a word token rather than
+// punctuation.
+func wordToken(tok string) bool {
+	return tok != "" && wordChar(tok[0])
+}
+
+// tokenizeArg splits an operand into alternating runs of word and
+// punctuation characters: "8(R6)" becomes ["8", "(", "R6", ")"].
+func tokenizeArg(s string) []string {
+	var toks []string
+	for i := 0; i < len(s); {
+		j := i + 1
+		for j < len(s) && wordChar(s[j]) == wordChar(s[i]) {
+			j++
+		}
+		toks = append(toks, s[i:j])
+		i = j
+	}
+	return toks
 }
