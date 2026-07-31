@@ -57,7 +57,7 @@ func findPclntab(data []byte) []byte {
 			off += i
 			if off+8 <= len(data) {
 				quantum, ptrsize := data[off+6], data[off+7]
-				if (quantum == 1 || quantum == 4) && ptrsize == 8 {
+				if (quantum == 1 || quantum == 4) && (ptrsize == 4 || ptrsize == 8) {
 					return data[off:]
 				}
 			}

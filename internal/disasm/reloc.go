@@ -49,9 +49,10 @@ func dataMasked(name string, size uint64) bool {
 // result means the full normalize-and-diff pipeline would classify
 // the pair as relocation-only noise; false means unknown, and the
 // caller must fall back to full analysis. The sym lookups resolve
-// branch targets and the data lookups resolve page-based (ADRP,
-// AUIPC, PCALAU12I) data references, so a call or load retargeted to
-// a different symbol is never mistaken for relocation.
+// branch targets and the data lookups resolve data references
+// (page-based ADRP/AUIPC/PCALAU12I pairs, literal-pool words on arm),
+// so a call or load retargeted to a different symbol is never
+// mistaken for relocation.
 //
 // Architectures without a fast path (s390x; ppc64, whose ADDIS/ADD
 // pairs would need tracking analogous to arm64 ADRP) always report
@@ -72,6 +73,8 @@ func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint
 		return relocOnlyRISCV64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
 	case objfile.ArchLoong64:
 		return relocOnlyLoong64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
+	case objfile.ArchARM:
+		return relocOnlyARM(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
 	default:
 		// No fast path for s390x: its variable-length encoding has no
 		// cheap word-by-word walk, so triage always falls back to

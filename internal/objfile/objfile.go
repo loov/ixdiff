@@ -27,6 +27,7 @@ const (
 	ArchPPC64LE // little-endian
 	ArchRISCV64
 	ArchLoong64
+	ArchARM
 )
 
 // String returns the Go name of the architecture.
@@ -48,6 +49,8 @@ func (a Arch) String() string {
 		return "riscv64"
 	case ArchLoong64:
 		return "loong64"
+	case ArchARM:
+		return "arm"
 	default:
 		return "unknown"
 	}
@@ -217,6 +220,8 @@ func openELF(r io.ReaderAt, data []byte) (*Binary, error) {
 			return nil, fmt.Errorf("unsupported ELF machine %v (32-bit)", ef.Machine)
 		}
 		arch = ArchLoong64
+	case elf.EM_ARM:
+		arch = ArchARM
 	default:
 		return nil, fmt.Errorf("unsupported ELF machine %v", ef.Machine)
 	}

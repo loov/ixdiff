@@ -72,6 +72,8 @@ func Normalize(name string, insts []Inst, opts Options) []string {
 //   - AUIPC upper immediates (riscv64) and PCALAU12I page immediates
 //     (loong64) become $<page>, with the same <lo12> treatment for
 //     follow-up immediates on their registers
+//   - address-valued immediates, including arm literal-pool WORDs,
+//     resolve through DataSym or mask as $<addr>
 //
 // Call targets are expected to be symbolized already, via a Lookup
 // passed to Decode. Plain immediates are kept untouched.
@@ -240,6 +242,9 @@ func (n *norm) arg(in Inst, arg string, adrp map[string]uint64) string {
 	}
 	if n.opts.IsAddr != nil && immHex.MatchString(arg) {
 		if v, err := strconv.ParseUint(arg[1:], 0, 64); err == nil && n.opts.IsAddr(v) {
+			if ref, ok := n.data(v); ok {
+				return "$" + ref
+			}
 			return "$<addr>"
 		}
 	}

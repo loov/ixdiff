@@ -75,6 +75,41 @@ func TestDecode_ARM64_KnownBytes(t *testing.T) {
 	}
 }
 
+func TestDecode_ARM_KnownBytes(t *testing.T) {
+	code := []byte{
+		0x01, 0x00, 0xa0, 0xe3, // MOVW $1, R0
+		0x1e, 0xff, 0x2f, 0xe1, // BX R14
+	}
+	insts, err := disasm.Decode(objfile.ArchARM, code, 0x1000, nil)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got, want := strings.Join(opList(insts), " "), "MOV BX"; got != want {
+		t.Errorf("ops = %q, want %q", got, want)
+	}
+}
+
+// TestDecode_ARM_LiteralPool checks that the word referenced by a
+// pc-relative load decodes as a WORD pseudo-instruction rather than
+// being misdecoded as an instruction.
+func TestDecode_ARM_LiteralPool(t *testing.T) {
+	code := []byte{
+		0x00, 0x00, 0x9f, 0xe5, // MOVW 0(R15), R0 -> pool at +8
+		0x1e, 0xff, 0x2f, 0xe1, // BX R14
+		0x40, 0x12, 0x0b, 0x00, // pool word 0xb1240
+	}
+	insts, err := disasm.Decode(objfile.ArchARM, code, 0x1000, nil)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got, want := strings.Join(opList(insts), " "), "LDR BX WORD"; got != want {
+		t.Errorf("ops = %q, want %q", got, want)
+	}
+	if got, want := insts[2].Text, "WORD $0xb1240"; got != want {
+		t.Errorf("pool word text = %q, want %q", got, want)
+	}
+}
+
 // TestDecode_PPC64_KnownBytes checks the same instruction words in
 // both byte orders, since the two GOARCHes differ only in endianness.
 func TestDecode_PPC64_KnownBytes(t *testing.T) {
@@ -160,6 +195,7 @@ func TestDecode_RealFunction(t *testing.T) {
 	}{
 		{"amd64", testbin.Config{GOOS: "linux", GOARCH: "amd64"}},
 		{"arm64", testbin.Config{GOOS: "linux", GOARCH: "arm64"}},
+		{"arm", testbin.Config{GOOS: "linux", GOARCH: "arm"}},
 		{"386", testbin.Config{GOOS: "linux", GOARCH: "386"}},
 		{"s390x", testbin.Config{GOOS: "linux", GOARCH: "s390x"}},
 		{"ppc64", testbin.Config{GOOS: "linux", GOARCH: "ppc64"}},

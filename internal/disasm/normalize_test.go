@@ -132,6 +132,34 @@ func TestNormalize_Loong64Operands(t *testing.T) {
 	}
 }
 
+func TestNormalize_ARMOperands(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x3000, Len: 4, Op: "LDR", Text: "MOVW 0x8(R15), R0"},
+		{Addr: 0x3004, Len: 4, Op: "B", Text: "B 0x3014"},
+		{Addr: 0x3008, Len: 4, Op: "BL", Text: "BL runtime.makeslice(SB)"},
+		{Addr: 0x300c, Len: 4, Op: "WORD", Text: "WORD $0x4a2c40"},
+		{Addr: 0x3010, Len: 4, Op: "WORD", Text: "WORD $0x2a"},
+		{Addr: 0x3014, Len: 4, Op: "BX", Text: "BX R14"},
+	}
+	isAddr := func(v uint64) bool { return v >= 0x400000 && v < 0x500000 }
+	want := []string{
+		"MOVW 0x8(R15), R0",        // pc-relative pool load kept
+		"B L1",                     // branch -> label of BX
+		"BL runtime.makeslice(SB)", // symbolized call kept
+		"WORD $<addr>",             // address-valued pool word masked
+		"WORD $0x2a",               // constant pool word kept
+		"BX R14",
+	}
+	got := disasm.Normalize("main.f", insts, disasm.Options{IsAddr: isAddr})
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestNormalize_LabelsStableUnderInsertion checks that inserting an
+// instruction that is not a branch target does not renumber labels:
+// numbering follows target order, not instruction index.
+
 // TestNormalize_LabelsStableUnderInsertion checks that inserting an
 // instruction that is not a branch target does not renumber labels:
 // numbering follows target order, not instruction index.
@@ -237,9 +265,23 @@ func TestNormalize_MaskSP(t *testing.T) {
 // amd64 IP-relative form and the arm64 ADRP+low12 pair (which also
 // validates the ADRP page computation against GoSyntax output).
 func TestNormalize_ResolvesDataSymbols(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "riscv64", "loong64", "ppc64", "ppc64le"} {
-		t.Run(arch, func(t *testing.T) {
-			bin, err := objfile.Open(testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch}))
+	// main.main reads len(os.Args): the slice length lives one pointer
+	// past the os.Args base.
+	tests := []struct {
+		arch string
+		want string
+	}{
+		{"amd64", "os.Args+8"},
+		{"arm64", "os.Args+8"},
+		{"arm", "os.Args+4"},
+		{"riscv64", "os.Args+8"},
+		{"loong64", "os.Args+8"},
+		{"ppc64", "os.Args+8"},
+		{"ppc64le", "os.Args+8"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arch, func(t *testing.T) {
+			bin, err := objfile.Open(testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: tt.arch}))
 			if err != nil {
 				t.Fatalf("Open: %v", err)
 			}
@@ -254,10 +296,8 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 			lines := disasm.Normalize(fn.Name, insts,
 				disasm.Options{IsAddr: bin.Contains, DataSym: bin.DataSym})
 			joined := strings.Join(lines, "\n")
-			// main.main reads len(os.Args): the slice length lives 8
-			// bytes past the os.Args base.
-			if !strings.Contains(joined, "os.Args+8") {
-				t.Errorf("expected os.Args+8 data reference in main.main:\n%s", joined)
+			if !strings.Contains(joined, tt.want) {
+				t.Errorf("expected %s data reference in main.main:\n%s", tt.want, joined)
 			}
 		})
 	}
@@ -269,7 +309,7 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 // with different ldflags shifts symbol addresses without changing
 // function bodies.
 func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "riscv64", "loong64", "s390x", "ppc64", "ppc64le"} {
+	for _, arch := range []string{"amd64", "arm64", "arm", "riscv64", "loong64", "s390x", "ppc64", "ppc64le"} {
 		t.Run(arch, func(t *testing.T) {
 			pathA := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch})
 			pathB := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch, Tags: "pad"})

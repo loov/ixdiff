@@ -156,6 +156,151 @@ func TestRelocOnly_ARM64(t *testing.T) {
 	}
 }
 
+func TestRelocOnly_ARM(t *testing.T) {
+	// bl encodes BL to a target off bytes from the instruction; the arm
+	// pc reads eight bytes ahead.
+	bl := func(off int32) uint32 { return 0xEB000000 | uint32((off-8)/4)&0x00FFFFFF }
+	b := func(off int32) uint32 { return 0xEA000000 | uint32((off-8)/4)&0x00FFFFFF }
+	// ldrLit encodes LDR Rt, [PC, #imm]: a literal-pool load.
+	ldrLit := func(rt, imm uint32) uint32 { return 0xE59F0000 | rt<<12 | imm }
+	const (
+		movW1 = 0xE3A00001 // MOVW $1, R0
+		bxLR  = 0xE12FFF1E // BX R14
+	)
+
+	// Symbol layout mirrors the arm64 test: callee at 0x11000 (old) and
+	// 0x22000 (new), otherFn at 0x13000/0x24000; functions start at
+	// 0x10000/0x20000.
+	oldSym := func(addr uint64) (string, uint64) {
+		switch {
+		case addr >= 0x11000 && addr < 0x12000:
+			return "callee", 0x11000
+		case addr >= 0x13000 && addr < 0x14000:
+			return "otherFn", 0x13000
+		}
+		return "", 0
+	}
+	newSym := func(addr uint64) (string, uint64) {
+		switch {
+		case addr >= 0x22000 && addr < 0x23000:
+			return "callee", 0x22000
+		case addr >= 0x24000 && addr < 0x25000:
+			return "otherFn", 0x24000
+		}
+		return "", 0
+	}
+	oldData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x15000 && addr < 0x15100:
+			return "globalA", 0x15000, 0x100
+		case addr >= 0x15100 && addr < 0x15200:
+			return "globalB", 0x15100, 0x100
+		}
+		return "", 0, 0
+	}
+	newData := func(addr uint64) (string, uint64, uint64) {
+		switch {
+		case addr >= 0x26000 && addr < 0x26100:
+			return "globalA", 0x26000, 0x100
+		case addr >= 0x26100 && addr < 0x26200:
+			return "globalB", 0x26100, 0x100
+		}
+		return "", 0, 0
+	}
+
+	tests := []struct {
+		name     string
+		old, new []uint32
+		want     bool
+	}{
+		{
+			name: "identical",
+			old:  []uint32{movW1, bxLR},
+			new:  []uint32{movW1, bxLR},
+			want: true,
+		},
+		{
+			// old: 0x10000 -> 0x11000 (callee), new: 0x20000 -> 0x22000 (callee)
+			name: "same callee at shifted address",
+			old:  []uint32{bl(0x1000), bxLR},
+			new:  []uint32{bl(0x2000), bxLR},
+			want: true,
+		},
+		{
+			// old calls callee, new calls otherFn: a real change.
+			name: "retargeted call",
+			old:  []uint32{bl(0x1000), bxLR},
+			new:  []uint32{bl(0x4000), bxLR},
+			want: false,
+		},
+		{
+			name: "branch link bit changed",
+			old:  []uint32{bl(0x1000), bxLR},
+			new:  []uint32{b(0x2000), bxLR},
+			want: false,
+		},
+		{
+			name: "intra-function branch retargeted",
+			old:  []uint32{b(4), movW1, bxLR},
+			new:  []uint32{b(8), movW1, bxLR},
+			want: false,
+		},
+		{
+			// Pool word follows the load and BX: old holds
+			// globalA+0x40, new the same symbol at its shifted address.
+			name: "pool word moved with same symbol",
+			old:  []uint32{ldrLit(0, 0), bxLR, 0x15040},
+			new:  []uint32{ldrLit(0, 0), bxLR, 0x26040},
+			want: true,
+		},
+		{
+			// old resolves globalA+0x40, new globalB+0x40: a load
+			// switched to a different global is a real change.
+			name: "pool word switched to different global",
+			old:  []uint32{ldrLit(0, 0), bxLR, 0x15040},
+			new:  []uint32{ldrLit(0, 0), bxLR, 0x26140},
+			want: false,
+		},
+		{
+			// Identical pool words, but the value resolves to globalB
+			// only on the old side: still a real change.
+			name: "identical pool word different symbol",
+			old:  []uint32{ldrLit(0, 0), bxLR, 0x15140},
+			new:  []uint32{ldrLit(0, 0), bxLR, 0x15140},
+			want: false,
+		},
+		{
+			// Neither value resolves: the fast path cannot judge how
+			// raw constants render, so it must defer to full analysis.
+			name: "differing unresolved pool words",
+			old:  []uint32{ldrLit(0, 0), bxLR, 0x99},
+			new:  []uint32{ldrLit(0, 0), bxLR, 0x9A},
+			want: false,
+		},
+		{
+			name: "real instruction change",
+			old:  []uint32{movW1, bxLR},
+			new:  []uint32{bxLR, bxLR},
+			want: false,
+		},
+		{
+			name: "length mismatch",
+			old:  []uint32{bxLR},
+			new:  []uint32{movW1, bxLR},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := disasm.RelocOnly(objfile.ArchARM,
+				words(tt.old...), words(tt.new...), 0x10000, 0x20000, oldSym, newSym, oldData, newData)
+			if got != tt.want {
+				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRelocOnly_RISCV64(t *testing.T) {
 	const (
 		rvRet = 0x00008067 // JALR X0, (X1)

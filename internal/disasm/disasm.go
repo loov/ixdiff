@@ -5,8 +5,10 @@ package disasm
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
 
+	"golang.org/x/arch/arm/armasm"
 	"golang.org/x/arch/arm64/arm64asm"
 	"golang.org/x/arch/loong64/loong64asm"
 	"golang.org/x/arch/ppc64/ppc64asm"
@@ -45,6 +47,8 @@ func Decode(arch objfile.Arch, code []byte, addr uint64, lookup SymLookup) ([]In
 		return decodeX86(code, addr, lookup, 32), nil
 	case objfile.ArchARM64:
 		return decodeARM64(code, addr, lookup), nil
+	case objfile.ArchARM:
+		return decodeARM(code, addr, lookup), nil
 	case objfile.ArchS390X:
 		return decodeS390X(code, addr, lookup), nil
 	case objfile.ArchPPC64:
@@ -208,6 +212,96 @@ func decodeLoong64(code []byte, addr uint64, lookup SymLookup) []Inst {
 		insts = append(insts, byteInst(addr, code))
 	}
 	return insts
+}
+
+// decodeARM decodes 32-bit ARM-mode code (Go on arm never emits
+// Thumb). Words referenced by pc-relative literal loads are constant
+// pools interleaved with the code; they become WORD pseudo-instructions
+// instead of being misdecoded as instructions.
+func decodeARM(code []byte, addr uint64, lookup SymLookup) []Inst {
+	pool := armPool(code)
+	text := &codeReader{code: code, addr: addr}
+	insts := make([]Inst, 0, len(code)/4)
+	i := 0
+	for ; i+4 <= len(code); i += 4 {
+		pc := addr + uint64(i)
+		if pool[i] {
+			w := binary.LittleEndian.Uint32(code[i:])
+			insts = append(insts, Inst{Addr: pc, Len: 4, Op: "WORD", Text: fmt.Sprintf("WORD $%#x", w)})
+			continue
+		}
+		inst, err := armasm.Decode(code[i:i+4], armasm.ModeARM)
+		if err != nil {
+			insts = append(insts, byteInst(pc, code[i:i+4]))
+			continue
+		}
+		insts = append(insts, Inst{
+			Addr: pc,
+			Len:  4,
+			Op:   inst.Op.String(),
+			Text: armasm.GoSyntax(inst, pc, lookup, text),
+		})
+	}
+	if i < len(code) {
+		insts = append(insts, byteInst(addr+uint64(i), code[i:]))
+	}
+	return insts
+}
+
+// armPool returns the byte offsets of the literal-pool words of
+// ARM-mode code: the words referenced by pc-relative LDR and VLDR
+// loads. Offsets are relative to the start of code, word-aligned.
+func armPool(code []byte) map[int]bool {
+	pool := map[int]bool{}
+	n := len(code) &^ 3
+	for i := 0; i < n; i += 4 {
+		w := binary.LittleEndian.Uint32(code[i:])
+		if w>>28 == 0xF { // unconditional space: PLD etc., not a load
+			continue
+		}
+		var off, size int
+		switch {
+		case w&0x0F7F0000 == 0x051F0000: // LDR Rt, [PC, ±imm12]
+			off, size = int(w&0xFFF), 4
+		case w&0x0F3F0E00 == 0x0D1F0A00: // VLDR Fd, [PC, ±imm8*4]
+			off, size = int(w&0xFF)*4, 4
+			if w&0x100 != 0 { // double precision
+				size = 8
+			}
+		default:
+			continue
+		}
+		if w&0x00800000 == 0 { // U bit clear: subtract the offset
+			off = -off
+		}
+		target := i + 8 + off
+		for j := 0; j < size; j += 4 {
+			if p := target + j; 0 <= p && p+4 <= n {
+				pool[p] = true
+			}
+		}
+	}
+	return pool
+}
+
+// codeReader serves the decoded code slice at its virtual address, so
+// GoSyntax can render arm literal-pool loads as constant loads.
+type codeReader struct {
+	code []byte
+	addr uint64
+}
+
+// ReadAt implements io.ReaderAt over the code using virtual addresses
+// as offsets.
+func (r *codeReader) ReadAt(p []byte, off int64) (int, error) {
+	if off < int64(r.addr) || off-int64(r.addr) >= int64(len(r.code)) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.code[off-int64(r.addr):])
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
 }
 
 // byteInst represents undecodable bytes as a BYTE pseudo-instruction.

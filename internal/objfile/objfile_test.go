@@ -126,3 +126,18 @@ func TestOpen_ELF_Loong64(t *testing.T) {
 		t.Error("main.main not found")
 	}
 }
+
+func TestOpen_ELF_ARM(t *testing.T) {
+	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "arm"})
+
+	bin, err := objfile.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if bin.Arch != objfile.ArchARM {
+		t.Errorf("Arch = %v, want arm", bin.Arch)
+	}
+	if bin.Funcs["main.main"] == nil {
+		t.Error("main.main not found")
+	}
+}

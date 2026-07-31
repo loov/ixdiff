@@ -101,8 +101,8 @@ Other flags:
    are matched by name, with renamed functions (closure renumbering,
    generic respecialization, near-identical bodies) re-paired among
    the added/removed leftovers.
-2. Byte-identical pairs are skipped outright. Pairs whose
-   bytes differ only in relocation fields (verified against the symbol
+2. Byte-identical pairs are skipped outright. Pairs whose bytes
+   differ only in relocation fields (verified against the symbol
    tables, so a retargeted call still counts as a change) are
    classified without disassembly.
 3. The rest are disassembled and normalized: call targets are
@@ -120,11 +120,11 @@ those are the differences an optimization comparison is looking for.
 
 ## Limitations
 
-- Instruction-level masking exists for amd64, arm64, 386, riscv64,
-  loong64, s390x, and ppc64/ppc64le only; other architectures are
-  unsupported. On s390x, pc-relative data references (`larl` and
-  friends) are always masked rather than resolved to symbol names,
-  and the relocation-only fast path does not apply.
+- Instruction-level masking exists for amd64, arm64, arm (32-bit),
+  386, riscv64, loong64, s390x, and ppc64/ppc64le only; other
+  architectures are unsupported. On s390x, pc-relative data references
+  (`larl` and friends) are always masked rather than resolved to
+  symbol names, and the relocation-only fast path does not apply.
 - Non-Go binaries work only as well as their symbol tables; duplicate
   static symbols (cgo) keep the last definition.
 - The pclntab header magic list needs an update when a new Go release
