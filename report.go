@@ -274,7 +274,7 @@ func countInsts(insts []disasm.Inst) int {
 
 // writeSummary prints the overall comparison: pair counts, total size
 // delta, the aggregated opcode delta, and the top-N changed functions.
-func writeSummary(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, sortBy string) {
+func writeSummary(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, sortBy string, states map[fndiff.State]bool) {
 	counts := map[fndiff.State]int{}
 	var sizeDelta int64
 	for _, p := range pairs {
@@ -314,7 +314,7 @@ func writeSummary(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top i
 		}
 	}
 
-	writeTop(w, pairs, analyzed, top, sortBy)
+	writeTop(w, pairs, analyzed, top, sortBy, states)
 }
 
 // sortedOps orders mnemonics by descending |delta|, then name.
@@ -345,12 +345,15 @@ func instDeltas(analyzed []*analysis) map[string]int {
 }
 
 // rankPairs returns the top non-identical functions ordered by
-// absolute size or instruction-count delta, zero-delta entries
-// omitted.
-func rankPairs(pairs []*fndiff.Pair, instDelta map[string]int, top int, sortBy string) []*fndiff.Pair {
+// absolute size or instruction-count delta, or by name; zero-delta
+// entries are omitted. A non-nil states set keeps only those states.
+func rankPairs(pairs []*fndiff.Pair, instDelta map[string]int, top int, sortBy string, states map[fndiff.State]bool) []*fndiff.Pair {
 	ranked := make([]*fndiff.Pair, 0, len(pairs))
 	for _, p := range pairs {
 		if p.State == fndiff.StateIdentical {
+			continue
+		}
+		if states != nil && !states[p.State] {
 			continue
 		}
 		switch sortBy {
@@ -362,14 +365,20 @@ func rankPairs(pairs []*fndiff.Pair, instDelta map[string]int, top int, sortBy s
 			if instDelta[p.Name] == 0 {
 				continue
 			}
+		case "name":
+			if p.SizeDelta() == 0 && instDelta[p.Name] == 0 {
+				continue
+			}
 		}
 		ranked = append(ranked, p)
 	}
 	slices.SortFunc(ranked, func(a, b *fndiff.Pair) int {
 		var d int
-		if sortBy == "insts" {
+		switch sortBy {
+		case "insts":
 			d = abs(instDelta[b.Name]) - abs(instDelta[a.Name])
-		} else {
+		case "name":
+		default:
 			d = int(abs64(b.SizeDelta()) - abs64(a.SizeDelta()))
 		}
 		if d != 0 {
@@ -385,14 +394,18 @@ func rankPairs(pairs []*fndiff.Pair, instDelta map[string]int, top int, sortBy s
 
 // writeTop prints the top-N functions ranked by absolute size or
 // instruction-count delta.
-func writeTop(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, sortBy string) {
+func writeTop(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, top int, sortBy string, states map[fndiff.State]bool) {
 	instDelta := instDeltas(analyzed)
-	ranked := rankPairs(pairs, instDelta, top, sortBy)
+	ranked := rankPairs(pairs, instDelta, top, sortBy, states)
 	if len(ranked) == 0 {
 		return
 	}
 
-	fmt.Fprintf(w, "\ntop %d by %s delta:\n", len(ranked), sortBy)
+	order := sortBy + " delta"
+	if sortBy == "name" {
+		order = "name"
+	}
+	fmt.Fprintf(w, "\ntop %d by %s:\n", len(ranked), order)
 	fmt.Fprintf(w, "  %10s %8s %-9s %s\n", "bytes", "insts", "state", "function")
 	for _, p := range ranked {
 		insts := "-"

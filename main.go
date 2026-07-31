@@ -75,6 +75,9 @@ type cmdDiff struct {
 	filters []string
 	top     int
 	sortBy string
+	states []string
+	// stateSet is states parsed for rankPairs; nil keeps every state.
+	stateSet map[fndiff.State]bool
 	maskSP bool
 	json   bool
 	sideBy bool
@@ -85,6 +88,15 @@ type cmdDiff struct {
 
 	oldPath string
 	newPath string
+}
+
+// setState marks s as kept by the --state filter, initializing the set
+// on first use.
+func (c *cmdDiff) setState(s fndiff.State) {
+	if c.stateSet == nil {
+		c.stateSet = map[fndiff.State]bool{}
+	}
+	c.stateSet[s] = true
 }
 
 // norm returns the normalization options selected by flags.
@@ -100,7 +112,9 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 		clingy.Repeated).([]string)
 	c.top = params.Flag("top", "number of functions to list in ranking tables", 100,
 		clingy.Transform(strconv.Atoi)).(int)
-	c.sortBy = params.Flag("sort", "ranking order for tables: size or insts", "size").(string)
+	c.sortBy = params.Flag("sort", "ranking order for tables: size, insts, or name", "size").(string)
+	c.states = params.Flag("state", "limit tables to functions in this state: changed, added, or removed (repeatable)", []string(nil),
+		clingy.Repeated).([]string)
 	c.maskSP = params.Flag("mask-sp", "ignore stack-offset shifts caused by frame size changes", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 	c.json = params.Flag("json", "emit machine-readable JSON instead of text", false,
@@ -120,9 +134,21 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 // Execute runs the comparison and writes the report to stdout.
 func (c *cmdDiff) Execute(ctx context.Context) error {
 	switch c.sortBy {
-	case "size", "insts":
+	case "size", "insts", "name":
 	default:
-		return fmt.Errorf("unknown sort order %q, expected size or insts", c.sortBy)
+		return fmt.Errorf("unknown sort order %q, expected size, insts, or name", c.sortBy)
+	}
+	for _, s := range c.states {
+		switch s {
+		case "changed":
+			c.setState(fndiff.StateChanged)
+		case "added":
+			c.setState(fndiff.StateAdded)
+		case "removed":
+			c.setState(fndiff.StateRemoved)
+		default:
+			return fmt.Errorf("unknown --state %q, expected changed, added, or removed", s)
+		}
 	}
 	var err error
 	if c.pal, err = resolvePalette(c.color); err != nil {
@@ -169,7 +195,7 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	if c.json {
 		return c.writeJSONSummary(stdout, old.Arch.String(), pairs, analyzed, old, new)
 	}
-	writeSummary(stdout, pairs, analyzed, c.top, c.sortBy)
+	writeSummary(stdout, pairs, analyzed, c.top, c.sortBy, c.stateSet)
 	if c.all {
 		return c.writeAll(stdout, pairs, analyzed, old, new)
 	}
@@ -183,7 +209,7 @@ func (c *cmdDiff) writeAll(w io.Writer, pairs []*fndiff.Pair, analyzed []*analys
 	for _, a := range analyzed {
 		byName[a.pair.Name] = a
 	}
-	for _, p := range rankPairs(pairs, instDeltas(analyzed), c.top, c.sortBy) {
+	for _, p := range rankPairs(pairs, instDeltas(analyzed), c.top, c.sortBy, c.stateSet) {
 		fmt.Fprintln(w)
 		a := byName[p.Name]
 		switch p.State {

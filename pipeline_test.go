@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -149,6 +150,46 @@ func TestPipeline_AllAppendsRankedDiffs(t *testing.T) {
 		if len(fn.Diff) == 0 {
 			t.Errorf("ranked %s function %s has no diff in --all --json", fn.State, fn.Name)
 		}
+	}
+}
+
+// TestPipeline_StateFilterAndNameSort checks the table-scoping flags:
+// --state keeps only the requested states and --sort name orders the
+// table alphabetically for stable CI output.
+func TestPipeline_StateFilterAndNameSort(t *testing.T) {
+	base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
+	noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", GCFlags: "-l"})
+
+	out := run(t, "--state", "added", base, noinline)
+	table := out[strings.Index(out, "top "):]
+	if strings.Contains(table, " changed ") || strings.Contains(table, " removed ") {
+		t.Errorf("--state added table contains other states:\n%s", table)
+	}
+	if !strings.Contains(table, " added ") {
+		t.Errorf("--state added table has no added functions:\n%s", table)
+	}
+
+	out = run(t, "--sort", "name", base, noinline)
+	table = out[strings.Index(out, "top "):]
+	if !strings.Contains(table, "by name:") {
+		t.Errorf("expected name-ordered table header:\n%s", table)
+	}
+	var names []string
+	for _, line := range strings.Split(table, "\n")[2:] {
+		if fields := strings.Fields(line); len(fields) >= 4 {
+			names = append(names, fields[3])
+		}
+	}
+	if len(names) < 2 || !slices.IsSorted(names) {
+		t.Errorf("table rows not sorted by name: %v", names)
+	}
+
+	got, err := parse(t, "--state", "bogus", "a", "b")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := got.Execute(context.Background()); err == nil {
+		t.Error("expected error for --state bogus, got nil")
 	}
 }
 

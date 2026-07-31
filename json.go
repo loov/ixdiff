@@ -84,7 +84,7 @@ func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, pairs []*fndiff.Pai
 	}
 
 	instDelta := instDeltas(analyzed)
-	ranked := rankPairs(pairs, instDelta, c.top, c.sortBy)
+	ranked := rankPairs(pairs, instDelta, c.top, c.sortBy, c.stateSet)
 	funcs := make([]jsonFuncReport, 0, len(ranked))
 	for _, p := range ranked {
 		a := byName[p.Name]
