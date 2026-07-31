@@ -66,6 +66,9 @@ func Normalize(name string, insts []Inst, opts Options) []string {
 //   - ADRP page offsets (arm64) become <page>(PC), and the follow-up
 //     low-12-bit immediates on ADRP'd registers become <lo12>
 //   - pc-relative data references (s390x larl etc.) become <addr>(PC)
+//   - ADDIS $0 upper halves (ppc64) become <hi>, and the follow-up
+//     low-16-bit immediates on ADDIS'd registers are resolved the
+//     same way as ADRP follow-ups
 //
 // Call targets are expected to be symbolized already, via a Lookup
 // passed to Decode. Plain immediates are kept untouched.
@@ -78,8 +81,9 @@ func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 		n.start = insts[0].Addr
 	}
 
-	// adrp maps registers holding an ADRP page address to that page,
-	// so follow-up low-12-bit immediates can be resolved to symbols.
+	// adrp maps registers holding a partial address — an ADRP page
+	// (arm64) or an ADDIS $0 upper half (ppc64) — to that base, so
+	// follow-up low-bit immediates can be resolved to symbols.
 	adrp := map[string]uint64{}
 
 	lines := make([]Line, len(insts))
@@ -90,18 +94,27 @@ func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 			continue
 		}
 		n.target = -1
-		args := strings.Split(rest, ", ")
+		// ppc64 GoSyntax joins operands with a bare comma, the other
+		// architectures with comma-space; strip the optional space.
+		args := strings.Split(rest, ",")
 		for j, arg := range args {
-			args[j] = n.arg(in, arg, adrp)
+			args[j] = n.arg(in, strings.TrimPrefix(arg, " "), adrp)
 		}
 		dest := args[len(args)-1]
-		if in.Op == "ADRP" {
+		switch {
+		case in.Op == "ADRP":
 			if page, ok := adrpPage(in); ok {
 				adrp[dest] = page
 			} else {
 				delete(adrp, dest)
 			}
-		} else {
+		case in.Op == "ADDIS":
+			if base, ok := addisBase(in); ok {
+				adrp[dest] = base
+			} else {
+				delete(adrp, dest)
+			}
+		default:
 			delete(adrp, dest)
 		}
 		lines[i] = Line{Text: op + " " + strings.Join(args, ", "), Target: n.target}
@@ -187,6 +200,7 @@ var (
 
 var (
 	immArg = regexp.MustCompile(`^\$\d+$`)
+	immSig = regexp.MustCompile(`^\$-?\d+$`)
 	immHex = regexp.MustCompile(`^\$0x[0-9a-f]+$`)
 	// A zero displacement renders as a bare (Rn), so the offset part
 	// is optional: masking must treat 0(Rn) and (Rn) alike or an
@@ -221,6 +235,27 @@ func (n *norm) arg(in Inst, arg string, adrp map[string]uint64) string {
 	if n.opts.IsAddr != nil && immHex.MatchString(arg) {
 		if v, err := strconv.ParseUint(arg[1:], 0, 64); err == nil && n.opts.IsAddr(v) {
 			return "$<addr>"
+		}
+	}
+	if in.Op == "ADDIS" && arg != "$0" && immSig.MatchString(arg) &&
+		strings.HasPrefix(in.Text, "ADDIS $0,") {
+		// The upper half of a ppc64 absolute address, the analogue of
+		// the ADRP page offset.
+		return "<hi>"
+	}
+	if in.Op == "ADD" && immSig.MatchString(arg) {
+		// ADD Ra,$lo,Rd completing an ADDIS pair (ppc64 operand
+		// order: the base register comes first).
+		if rest, ok := strings.CutPrefix(in.Text, "ADD "); ok {
+			if reg, imms, ok := strings.Cut(rest, ","); ok && strings.HasPrefix(imms, arg+",") {
+				if base, tracked := adrp[reg]; tracked {
+					imm, _ := strconv.ParseInt(arg[1:], 10, 64)
+					if ref, ok := n.data(base + uint64(imm)); ok {
+						return "$" + ref
+					}
+					return "$<lo>"
+				}
+			}
 		}
 	}
 	if in.Op == "ADD" && immArg.MatchString(arg) {
@@ -353,4 +388,23 @@ func adrpPage(in Inst) (uint64, bool) {
 		return 0, false
 	}
 	return uint64(int64(in.Addr)&^0xFFF + off), true
+}
+
+// addisBase computes the absolute base address a ppc64
+// "ADDIS $0,$hi,Rd" materializes: hi sign-extended and shifted left
+// 16. Any other ADDIS form reports false.
+func addisBase(in Inst) (uint64, bool) {
+	rest, ok := strings.CutPrefix(in.Text, "ADDIS $0,")
+	if !ok {
+		return 0, false
+	}
+	imm, _, ok := strings.Cut(rest, ",")
+	if !ok || !immSig.MatchString(imm) {
+		return 0, false
+	}
+	hi, err := strconv.ParseInt(imm[1:], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return uint64(hi << 16), true
 }

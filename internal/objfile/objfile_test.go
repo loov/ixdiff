@@ -68,47 +68,31 @@ func TestFunc_Code_MatchesFileContents(t *testing.T) {
 	}
 }
 
-func TestOpen_ELF_386(t *testing.T) {
-	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "386"})
+func TestOpen_ELF_OtherArches(t *testing.T) {
+	tests := []struct {
+		goarch string
+		want   objfile.Arch
+	}{
+		{"arm64", objfile.ArchARM64},
+		{"386", objfile.Arch386},
+		{"s390x", objfile.ArchS390X},
+		{"ppc64", objfile.ArchPPC64},
+		{"ppc64le", objfile.ArchPPC64LE},
+	}
+	for _, tt := range tests {
+		t.Run(tt.goarch, func(t *testing.T) {
+			path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: tt.goarch})
 
-	bin, err := objfile.Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if bin.Arch != objfile.Arch386 {
-		t.Errorf("Arch = %v, want 386", bin.Arch)
-	}
-	if bin.Funcs["main.main"] == nil {
-		t.Error("main.main not found")
-	}
-}
-
-func TestOpen_ELF_ARM64(t *testing.T) {
-	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "arm64"})
-
-	bin, err := objfile.Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if bin.Arch != objfile.ArchARM64 {
-		t.Errorf("Arch = %v, want arm64", bin.Arch)
-	}
-	if bin.Funcs["main.main"] == nil {
-		t.Error("main.main not found")
-	}
-}
-
-func TestOpen_ELF_S390X(t *testing.T) {
-	path := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "s390x"})
-
-	bin, err := objfile.Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if bin.Arch != objfile.ArchS390X {
-		t.Errorf("Arch = %v, want s390x", bin.Arch)
-	}
-	if bin.Funcs["main.main"] == nil {
-		t.Error("main.main not found")
+			bin, err := objfile.Open(path)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			if bin.Arch != tt.want {
+				t.Errorf("Arch = %v, want %v", bin.Arch, tt.want)
+			}
+			if bin.Funcs["main.main"] == nil {
+				t.Error("main.main not found")
+			}
+		})
 	}
 }

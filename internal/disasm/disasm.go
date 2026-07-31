@@ -3,10 +3,12 @@
 package disasm
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strings"
 
 	"golang.org/x/arch/arm64/arm64asm"
+	"golang.org/x/arch/ppc64/ppc64asm"
 	"golang.org/x/arch/s390x/s390xasm"
 	"golang.org/x/arch/x86/x86asm"
 
@@ -43,6 +45,10 @@ func Decode(arch objfile.Arch, code []byte, addr uint64, lookup SymLookup) ([]In
 		return decodeARM64(code, addr, lookup), nil
 	case objfile.ArchS390X:
 		return decodeS390X(code, addr, lookup), nil
+	case objfile.ArchPPC64:
+		return decodePPC64(code, addr, lookup, binary.BigEndian), nil
+	case objfile.ArchPPC64LE:
+		return decodePPC64(code, addr, lookup, binary.LittleEndian), nil
 	default:
 		return nil, fmt.Errorf("unsupported architecture %v", arch)
 	}
@@ -106,6 +112,34 @@ func decodeS390X(code []byte, addr uint64, lookup SymLookup) []Inst {
 			continue
 		}
 		text := s390xasm.GoSyntax(inst, addr, lookup)
+		op, _, _ := strings.Cut(text, " ")
+		insts = append(insts, Inst{
+			Addr: addr,
+			Len:  inst.Len,
+			Op:   op,
+			Text: text,
+		})
+		code, addr = code[inst.Len:], addr+uint64(inst.Len)
+	}
+	if len(code) > 0 {
+		insts = append(insts, byteInst(addr, code))
+	}
+	return insts
+}
+
+func decodePPC64(code []byte, addr uint64, lookup SymLookup, ord binary.ByteOrder) []Inst {
+	insts := make([]Inst, 0, len(code)/4)
+	for len(code) >= 4 {
+		inst, err := ppc64asm.Decode(code, ord)
+		if err != nil || inst.Len == 0 {
+			insts = append(insts, byteInst(addr, code[:4]))
+			code, addr = code[4:], addr+4
+			continue
+		}
+		// The raw Op is the lowercase Power mnemonic (ld, addis);
+		// take the mnemonic from the Go rendering instead (MOVD,
+		// ADDIS) so ops read consistently across architectures.
+		text := ppc64asm.GoSyntax(inst, addr, lookup)
 		op, _, _ := strings.Cut(text, " ")
 		insts = append(insts, Inst{
 			Addr: addr,

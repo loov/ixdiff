@@ -75,6 +75,36 @@ func TestDecode_ARM64_KnownBytes(t *testing.T) {
 	}
 }
 
+// TestDecode_PPC64_KnownBytes checks the same instruction words in
+// both byte orders, since the two GOARCHes differ only in endianness.
+func TestDecode_PPC64_KnownBytes(t *testing.T) {
+	tests := []struct {
+		name string
+		arch objfile.Arch
+		code []byte
+	}{
+		{"ppc64le", objfile.ArchPPC64LE, []byte{
+			0x01, 0x00, 0x60, 0x38, // MOVD $1, R3 (li r3,1)
+			0x20, 0x00, 0x80, 0x4e, // RET (blr)
+		}},
+		{"ppc64", objfile.ArchPPC64, []byte{
+			0x38, 0x60, 0x00, 0x01,
+			0x4e, 0x80, 0x00, 0x20,
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			insts, err := disasm.Decode(tt.arch, tt.code, 0x1000, nil)
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			if got, want := strings.Join(opList(insts), " "), "MOVD RET"; got != want {
+				t.Errorf("ops = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestDecode_S390X_KnownBytes(t *testing.T) {
 	code := []byte{
 		0xa7, 0x29, 0x00, 0x01, // LGHI $1, R2 -> MOVB $1, R2
@@ -98,6 +128,8 @@ func TestDecode_RealFunction(t *testing.T) {
 		{"arm64", testbin.Config{GOOS: "linux", GOARCH: "arm64"}},
 		{"386", testbin.Config{GOOS: "linux", GOARCH: "386"}},
 		{"s390x", testbin.Config{GOOS: "linux", GOARCH: "s390x"}},
+		{"ppc64", testbin.Config{GOOS: "linux", GOARCH: "ppc64"}},
+		{"ppc64le", testbin.Config{GOOS: "linux", GOARCH: "ppc64le"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

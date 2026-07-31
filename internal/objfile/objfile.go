@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"cmp"
 	"debug/elf"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"slices"
@@ -22,6 +23,8 @@ const (
 	ArchARM64
 	Arch386
 	ArchS390X
+	ArchPPC64   // big-endian
+	ArchPPC64LE // little-endian
 )
 
 // String returns the Go name of the architecture.
@@ -35,6 +38,10 @@ func (a Arch) String() string {
 		return "386"
 	case ArchS390X:
 		return "s390x"
+	case ArchPPC64:
+		return "ppc64"
+	case ArchPPC64LE:
+		return "ppc64le"
 	default:
 		return "unknown"
 	}
@@ -184,6 +191,14 @@ func openELF(r io.ReaderAt, data []byte) (*Binary, error) {
 		arch = Arch386
 	case elf.EM_S390:
 		arch = ArchS390X
+	case elf.EM_PPC64:
+		// The two GOARCHes differ only in byte order, recorded in
+		// the ELF ident and needed later for instruction decoding.
+		if ef.ByteOrder == binary.BigEndian {
+			arch = ArchPPC64
+		} else {
+			arch = ArchPPC64LE
+		}
 	default:
 		return nil, fmt.Errorf("unsupported ELF machine %v", ef.Machine)
 	}

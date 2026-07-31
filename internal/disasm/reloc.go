@@ -52,6 +52,10 @@ func dataMasked(name string, size uint64) bool {
 // branch targets and the data lookups resolve ADRP-based data
 // references, so a call or load retargeted to a different symbol is
 // never mistaken for relocation.
+//
+// Architectures without a fast path (s390x; ppc64, whose ADDIS/ADD
+// pairs would need tracking analogous to arm64 ADRP) always report
+// false and rely on full analysis; that costs speed, not correctness.
 func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint64,
 	oldSym, newSym SymLookup, oldData, newData DataLookup) bool {
 	if len(oldCode) != len(newCode) {

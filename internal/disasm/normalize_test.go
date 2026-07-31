@@ -55,6 +55,35 @@ func TestNormalize_ARM64Operands(t *testing.T) {
 	}
 }
 
+// TestNormalize_PPC64Operands covers the ppc64 absolute-address
+// materialization pair: the ADDIS $0 upper half is masked as <hi> and
+// the follow-up low 16 bits on the same register as <lo12>/$<lo>,
+// while unrelated immediates and displacements are kept.
+func TestNormalize_PPC64Operands(t *testing.T) {
+	insts := []disasm.Inst{
+		{Addr: 0x1000, Len: 4, Op: "ADDIS", Text: "ADDIS $0,$26,R5"},
+		{Addr: 0x1004, Len: 4, Op: "MOVD", Text: "MOVD -21896(R5),R5"},
+		{Addr: 0x1008, Len: 4, Op: "ADDIS", Text: "ADDIS $0,$13,R3"},
+		{Addr: 0x100c, Len: 4, Op: "ADD", Text: "ADD R3,$-22976,R3"},
+		{Addr: 0x1010, Len: 4, Op: "ADD", Text: "ADD R1,$80,R4"},
+		{Addr: 0x1014, Len: 4, Op: "BLT", Text: "BLT 0x1000"},
+		{Addr: 0x1018, Len: 4, Op: "RET", Text: "RET"},
+	}
+	want := []string{
+		"ADDIS $0, <hi>, R5",
+		"MOVD <lo12>(R5), R5", // low half of an ADDIS'd address
+		"ADDIS $0, <hi>, R3",
+		"ADD R3, $<lo>, R3", // ADD completing the pair
+		"ADD R1, $80, R4",   // untracked base register kept
+		"BLT L1",
+		"RET",
+	}
+	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
+	}
+}
+
 // TestNormalize_LabelsStableUnderInsertion checks that inserting an
 // instruction that is not a branch target does not renumber labels:
 // numbering follows target order, not instruction index.
@@ -158,7 +187,7 @@ func TestNormalize_MaskSP(t *testing.T) {
 // amd64 IP-relative form and the arm64 ADRP+low12 pair (which also
 // validates the ADRP page computation against GoSyntax output).
 func TestNormalize_ResolvesDataSymbols(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64"} {
+	for _, arch := range []string{"amd64", "arm64", "ppc64", "ppc64le"} {
 		t.Run(arch, func(t *testing.T) {
 			bin, err := objfile.Open(testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch}))
 			if err != nil {
@@ -190,7 +219,7 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 // with different ldflags shifts symbol addresses without changing
 // function bodies.
 func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64", "s390x"} {
+	for _, arch := range []string{"amd64", "arm64", "s390x", "ppc64", "ppc64le"} {
 		t.Run(arch, func(t *testing.T) {
 			pathA := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch})
 			pathB := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch, Tags: "pad"})
