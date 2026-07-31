@@ -288,6 +288,59 @@ func TestNormalize_MaskSP(t *testing.T) {
 	}
 }
 
+// TestNormalize_MaskSP_PerArch checks the arch-selected stack-pointer
+// patterns against operands taken from real GoSyntax output: the
+// stack displacement masks while a displacement off a general register
+// passes through.
+func TestNormalize_MaskSP_PerArch(t *testing.T) {
+	tests := []struct {
+		arch objfile.Arch
+		in   []string
+		want []string
+	}{
+		{objfile.ArchAMD64,
+			[]string{"MOVQ R11, 0x390(SP)", "CMPQ SP, 0x10(R14)"},
+			[]string{"MOVQ R11, <sp>(SP)", "CMPQ SP, 0x10(R14)"}},
+		{objfile.Arch386,
+			[]string{"MOVL DX, 0x20(SP)", "MOVL AX, 0(SP)", "CMPL SP, 0x8(CX)"},
+			[]string{"MOVL DX, <sp>(SP)", "MOVL AX, <sp>(SP)", "CMPL SP, 0x8(CX)"}},
+		{objfile.ArchARM64,
+			[]string{"MOVD.W R30, -112(RSP)", "MOVD 48(RSP), R2", "MOVD 16(R28), R16"},
+			[]string{"MOVD.W R30, <sp>(RSP)", "MOVD <sp>(RSP), R2", "MOVD 16(R28), R16"}},
+		{objfile.ArchARM,
+			[]string{"MOVW.W R14, -0x50(R13)", "MOVW R2, 0x24(R13)", "MOVW 0x8(R10), R1"},
+			[]string{"MOVW.W R14, <sp>(R13)", "MOVW R2, <sp>(R13)", "MOVW 0x8(R10), R1"}},
+		{objfile.ArchRISCV64,
+			[]string{"MOV X1, -104(X2)", "MOV X1, (X2)", "MOV 16(X27), X6"},
+			[]string{"MOV X1, <sp>(X2)", "MOV X1, <sp>(X2)", "MOV 16(X27), X6"}},
+		{objfile.ArchPPC64,
+			[]string{"MOVDU R31,-128(R1)", "MOVD 72(R1),R5", "MOVD 16(R30),R22"},
+			[]string{"MOVDU R31, <sp>(R1)", "MOVD <sp>(R1), R5", "MOVD 16(R30), R22"}},
+		{objfile.ArchPPC64LE,
+			[]string{"MOVD R0,80(R1)", "MOVD 16(R30),R22"},
+			[]string{"MOVD R0, <sp>(R1)", "MOVD 16(R30), R22"}},
+		{objfile.ArchLoong64,
+			[]string{"MOVV R1, -104(R3)", "MOVV 48(R3), R6", "MOVV 16(R22), R20"},
+			[]string{"MOVV R1, <sp>(R3)", "MOVV <sp>(R3), R6", "MOVV 16(R22), R20"}},
+		{objfile.ArchS390X,
+			[]string{"MOVD R14, -104(R15)", "MOVD -104(R0)(R15*1), R15", "MOVD 56(R0)(R15*1), R1", "MOVD 16(R13), R10"},
+			[]string{"MOVD R14, <sp>(R15)", "MOVD <sp>(R0)(R15*1), R15", "MOVD <sp>(R0)(R15*1), R1", "MOVD 16(R13), R10"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arch.String(), func(t *testing.T) {
+			insts := make([]disasm.Inst, len(tt.in))
+			for i, text := range tt.in {
+				op, _, _ := strings.Cut(text, " ")
+				insts[i] = disasm.Inst{Addr: 0x1000 + uint64(i*4), Len: 4, Op: op, Text: text}
+			}
+			got := disasm.Normalize("main.f", insts, disasm.Options{MaskSP: true, Arch: tt.arch})
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("MaskSP mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestNormalize_ResolvesDataSymbols checks against real binaries that
 // data references render as symbol+offset on both architectures: the
 // amd64 IP-relative form and the arm64 ADRP+low12 pair (which also

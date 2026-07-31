@@ -105,6 +105,23 @@ func TestPipeline_SingleFunctionDiff(t *testing.T) {
 	}
 }
 
+// TestPipeline_MaskSPMasksStackOffsets checks that --mask-sp reaches
+// the diff output on both an SP-named architecture and one whose stack
+// pointer is a numbered register (R1 on ppc64le).
+func TestPipeline_MaskSPMasksStackOffsets(t *testing.T) {
+	for _, arch := range []string{"amd64", "ppc64le"} {
+		t.Run(arch, func(t *testing.T) {
+			base := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch})
+			noinline := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: arch, GCFlags: "-l"})
+
+			out := run(t, "--mask-sp", "--fn", "main.main", base, noinline)
+			if !strings.Contains(out, "<sp>(") {
+				t.Errorf("expected masked stack displacements in diff:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestPipeline_AllAppendsRankedDiffs checks that --all follows the
 // summary with a diff section per ranked function: changed functions
 // get hunks, added ones a full listing, and the sections appear in

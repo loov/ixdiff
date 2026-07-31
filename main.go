@@ -92,6 +92,10 @@ type cmdDiff struct {
 
 	oldPath string
 	newPath string
+
+	// arch is the architecture of the binaries being compared, set by
+	// Execute after opening them.
+	arch objfile.Arch
 }
 
 // setState marks s as kept by the --state filter, initializing the set
@@ -105,7 +109,7 @@ func (c *cmdDiff) setState(s fndiff.State) {
 
 // norm returns the normalization options selected by flags.
 func (c *cmdDiff) norm() disasm.Options {
-	return disasm.Options{MaskSP: c.maskSP}
+	return disasm.Options{MaskSP: c.maskSP, Arch: c.arch}
 }
 
 // Setup declares the flags and arguments for the diff command.
@@ -178,6 +182,7 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	if old.Arch != new.Arch {
 		return fmt.Errorf("architecture mismatch: %v vs %v", old.Arch, new.Arch)
 	}
+	c.arch = old.Arch
 
 	pairs := fndiff.Compare(old, new)
 	pairs = fndiff.MatchRenames(pairs, bodySimilar(old, new, c.norm()))
