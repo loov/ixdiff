@@ -127,8 +127,8 @@ func (f *Func) Code() []byte {
 }
 
 // Open maps the binary at path and parses it. It detects the file
-// format from its magic bytes; currently ELF, Mach-O, PE, and wasm
-// are recognized.
+// format from its magic bytes; currently ELF, Mach-O, PE, wasm, and
+// Go compile archives are recognized.
 func Open(path string) (*Binary, error) {
 	data, closeMapping, err := mmapFile(path)
 	if err != nil {
@@ -159,6 +159,8 @@ func parse(data []byte) (*Binary, error) {
 		return openPE(r, data)
 	case magic == "\x00asm":
 		return openWasm(data)
+	case bytes.HasPrefix(data, []byte("!<arch>\n")):
+		return openGoArchive(data)
 	default:
 		return nil, fmt.Errorf("unsupported binary format")
 	}
