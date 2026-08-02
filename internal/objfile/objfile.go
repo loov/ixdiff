@@ -66,6 +66,10 @@ type Binary struct {
 	Arch Arch
 	// Funcs maps symbol name to function.
 	Funcs map[string]*Func
+	// NoLayout reports that function addresses are deterministic
+	// pseudo-addresses (file offsets in a Go compile archive) rather
+	// than a memory layout: gaps between functions are not padding.
+	NoLayout bool
 	// ranges are the [start, end) virtual address ranges of the
 	// binary's loadable sections, used to recognize address-valued
 	// immediates.

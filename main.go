@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
-	"runtime"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -27,9 +26,8 @@ import (
 
 	"github.com/zeebo/clingy"
 
-	"github.com/loov/ixdiff/internal/disasm"
-	"github.com/loov/ixdiff/internal/fndiff"
 	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/ixdiff/ixdiff"
 )
 
 func main() {
@@ -80,7 +78,7 @@ type cmdDiff struct {
 	sortBy  string
 	states  []string
 	// stateSet is states parsed for rankPairs; nil keeps every state.
-	stateSet map[fndiff.State]bool
+	stateSet map[ixdiff.State]bool
 	maskSP   bool
 	json     bool
 	sideBy   bool
@@ -93,23 +91,21 @@ type cmdDiff struct {
 	oldPath string
 	newPath string
 
-	// arch is the architecture of the binaries being compared, set by
-	// Execute after opening them.
-	arch objfile.Arch
+	// objOld and objNew are the raw object files, opened by Execute
+	// only for the --blocks renderer, which decodes functions itself.
+	objOld, objNew *objfile.Binary
 }
 
-// setState marks s as kept by the --state filter, initializing the set
-// on first use.
-func (c *cmdDiff) setState(s fndiff.State) {
+// setState marks the states kept by a --state value, initializing the
+// set on first use. "changed" also keeps relocation-only pairs, which
+// the tables display as changed.
+func (c *cmdDiff) setState(states ...ixdiff.State) {
 	if c.stateSet == nil {
-		c.stateSet = map[fndiff.State]bool{}
+		c.stateSet = map[ixdiff.State]bool{}
 	}
-	c.stateSet[s] = true
-}
-
-// norm returns the normalization options selected by flags.
-func (c *cmdDiff) norm() disasm.Options {
-	return disasm.Options{MaskSP: c.maskSP, Arch: c.arch}
+	for _, s := range states {
+		c.stateSet[s] = true
+	}
 }
 
 // Setup declares the flags and arguments for the diff command.
@@ -155,11 +151,11 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	for _, s := range c.states {
 		switch s {
 		case "changed":
-			c.setState(fndiff.StateChanged)
+			c.setState(ixdiff.Changed, ixdiff.RelocationOnly)
 		case "added":
-			c.setState(fndiff.StateAdded)
+			c.setState(ixdiff.Added)
 		case "removed":
-			c.setState(fndiff.StateRemoved)
+			c.setState(ixdiff.Removed)
 		default:
 			return fmt.Errorf("unknown --state %q, expected changed, added, or removed", s)
 		}
@@ -169,27 +165,40 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		return err
 	}
 
-	old, err := objfile.Open(c.oldPath)
+	old, err := ixdiff.Open(c.oldPath)
 	if err != nil {
 		return fmt.Errorf("opening old binary: %w", err)
 	}
 	defer old.Close()
-	new, err := objfile.Open(c.newPath)
+	new, err := ixdiff.Open(c.newPath)
 	if err != nil {
 		return fmt.Errorf("opening new binary: %w", err)
 	}
 	defer new.Close()
-	if old.Arch != new.Arch {
-		return fmt.Errorf("architecture mismatch: %v vs %v", old.Arch, new.Arch)
-	}
-	c.arch = old.Arch
 
-	pairs := fndiff.Compare(old, new)
-	pairs = fndiff.MatchRenames(pairs, bodySimilar(old, new, c.norm()))
+	d, err := ixdiff.Compare(old, new, &ixdiff.Options{MaskSP: c.maskSP})
+	if err != nil {
+		return err
+	}
+
+	if c.blocks && (c.all || len(c.fns) > 0) {
+		// The blocks renderer decodes and normalizes functions itself,
+		// which needs the raw object files.
+		if c.objOld, err = objfile.Open(c.oldPath); err != nil {
+			return fmt.Errorf("opening old binary: %w", err)
+		}
+		defer c.objOld.Close()
+		if c.objNew, err = objfile.Open(c.newPath); err != nil {
+			return fmt.Errorf("opening new binary: %w", err)
+		}
+		defer c.objNew.Close()
+	}
+
+	pairs := d.Pairs()
 	stdout := clingy.Stdout(ctx)
 
 	if len(c.fns) > 0 {
-		return c.executeFuncs(stdout, pairs, old, new)
+		return c.executeFuncs(stdout, d, pairs)
 	}
 
 	pairs, err = filterPairs(pairs, c.filters)
@@ -197,55 +206,40 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		return err
 	}
 
-	var nonIdentical []*fndiff.Pair
-	for _, p := range pairs {
-		if p.State != fndiff.StateIdentical {
-			nonIdentical = append(nonIdentical, p)
-		}
-	}
-	analyzed, err := analyze(nonIdentical, old, new, runtime.NumCPU(), c.norm())
-	if err != nil {
-		return err
-	}
 	if c.json {
-		return c.writeJSONSummary(stdout, old.Arch.String(), pairs, analyzed, old, new)
+		return c.writeJSONSummary(stdout, old.Arch(), d, pairs)
 	}
-	writeSummary(stdout, pairs, analyzed, c.top, c.sortBy, c.stateSet)
+	writeSummary(stdout, pairs, c.top, c.sortBy, c.stateSet)
 	if c.all {
-		return c.writeAll(stdout, pairs, analyzed, old, new)
+		return c.writeAll(stdout, d, pairs)
 	}
 	return nil
 }
 
 // writeAll appends a diff section for every function in the ranking
 // table, in table order, so one invocation yields a complete report.
-func (c *cmdDiff) writeAll(w io.Writer, pairs []*fndiff.Pair, analyzed []*analysis, old, new *objfile.Binary) error {
-	byName := make(map[string]*analysis, len(analyzed))
-	for _, a := range analyzed {
-		byName[a.pair.Name] = a
-	}
-	for _, p := range rankPairs(pairs, instDeltas(analyzed), c.top, c.sortBy, c.stateSet) {
+func (c *cmdDiff) writeAll(w io.Writer, d *ixdiff.Diff, pairs []ixdiff.Pair) error {
+	for _, p := range rankPairs(pairs, c.top, c.sortBy, c.stateSet) {
 		fmt.Fprintln(w)
-		a := byName[p.Name]
 		switch p.State {
-		case fndiff.StateChanged:
+		case ixdiff.Changed, ixdiff.RelocationOnly:
 			if c.blocks {
-				if err := writeFuncBlocks(w, p, old, new, c.norm(), c.pal, c.sideBy); err != nil {
+				if err := c.writeFuncBlocks(w, p); err != nil {
 					return err
 				}
 				continue
 			}
-		case fndiff.StateAdded, fndiff.StateRemoved:
-			fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta())
-			var err error
-			if a, err = listing(p, old, new, c.norm()); err != nil {
-				return err
-			}
+		case ixdiff.Added, ixdiff.Removed:
+			fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta)
+		}
+		lines, err := d.Lines(p)
+		if err != nil {
+			return err
 		}
 		if c.sideBy {
-			writeFuncDiffSide(w, a, c.pal)
+			writeFuncDiffSide(w, p, lines, c.pal)
 		} else {
-			writeFuncDiff(w, a, c.pal)
+			writeFuncDiff(w, p, lines, c.pal)
 		}
 	}
 	return nil
@@ -253,9 +247,9 @@ func (c *cmdDiff) writeAll(w io.Writer, pairs []*fndiff.Pair, analyzed []*analys
 
 // executeFuncs reports the assembly diff of every function named by a
 // --fn flag, in the order given, separated by blank lines.
-func (c *cmdDiff) executeFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objfile.Binary) error {
+func (c *cmdDiff) executeFuncs(w io.Writer, d *ixdiff.Diff, pairs []ixdiff.Pair) error {
 	if c.json {
-		return c.writeJSONFuncs(w, pairs, old, new)
+		return c.writeJSONFuncs(w, d, pairs)
 	}
 	for i, name := range c.fns {
 		if i > 0 {
@@ -268,55 +262,21 @@ func (c *cmdDiff) executeFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objf
 		if len(matches) > 1 {
 			fmt.Fprintf(w, "%q matches %d functions:\n", name, len(matches))
 			for _, p := range matches {
-				fmt.Fprintf(w, "  %-9v %+7d bytes  %s\n", p.State, p.SizeDelta(), p.Name)
+				fmt.Fprintf(w, "  %-9s %+7d bytes  %s\n", displayState(p.State), p.SizeDelta, p.Name)
 			}
 			continue
 		}
-		if err := c.writeFunc(w, matches[0], old, new); err != nil {
+		if err := c.writeFunc(w, d, matches[0]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// writeJSONFuncs emits the --fn reports as one JSON array. A uniquely
-// matched changed function includes its full diff; ambiguous matches
-// are listed without one, mirroring the text output.
-func (c *cmdDiff) writeJSONFuncs(w io.Writer, pairs []*fndiff.Pair, old, new *objfile.Binary) error {
-	var reports []jsonFuncReport
-	for _, name := range c.fns {
-		matches, err := matchFuncs(pairs, name)
-		if err != nil {
-			return err
-		}
-		withDiff := len(matches) == 1
-		for _, p := range matches {
-			var a *analysis
-			switch p.State {
-			case fndiff.StateChanged:
-				analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, c.norm())
-				if err != nil {
-					return err
-				}
-				a = analyzed[0]
-			case fndiff.StateAdded, fndiff.StateRemoved:
-				if withDiff {
-					var err error
-					if a, err = listing(p, old, new, c.norm()); err != nil {
-						return err
-					}
-				}
-			}
-			reports = append(reports, funcReport(p, a, withDiff))
-		}
-	}
-	return encodeJSON(w, reports)
-}
-
 // filterPairs keeps pairs whose name matches any filter: a substring,
 // or a regular expression when prefixed with ~. Without filters all
 // pairs are kept.
-func filterPairs(pairs []*fndiff.Pair, filters []string) ([]*fndiff.Pair, error) {
+func filterPairs(pairs []ixdiff.Pair, filters []string) ([]ixdiff.Pair, error) {
 	if len(filters) == 0 {
 		return pairs, nil
 	}
@@ -334,7 +294,7 @@ func filterPairs(pairs []*fndiff.Pair, filters []string) ([]*fndiff.Pair, error)
 			})
 		}
 	}
-	var kept []*fndiff.Pair
+	var kept []ixdiff.Pair
 	for _, p := range pairs {
 		for _, match := range matchers {
 			if match(p.Name) {
@@ -349,11 +309,11 @@ func filterPairs(pairs []*fndiff.Pair, filters []string) ([]*fndiff.Pair, error)
 // matchFuncs resolves a --fn value: an exact name wins, otherwise all
 // substring matches are returned. With no match at all the error
 // suggests the closest known names.
-func matchFuncs(pairs []*fndiff.Pair, name string) ([]*fndiff.Pair, error) {
-	var matches []*fndiff.Pair
+func matchFuncs(pairs []ixdiff.Pair, name string) ([]ixdiff.Pair, error) {
+	var matches []ixdiff.Pair
 	for _, p := range pairs {
 		if p.Name == name {
-			return []*fndiff.Pair{p}, nil
+			return []ixdiff.Pair{p}, nil
 		}
 		if strings.Contains(p.Name, name) {
 			matches = append(matches, p)
@@ -372,7 +332,7 @@ func matchFuncs(pairs []*fndiff.Pair, name string) ([]*fndiff.Pair, error) {
 // closestNames returns up to n function names nearest to name by
 // Levenshtein distance, ignoring names that differ in more than half
 // their length.
-func closestNames(pairs []*fndiff.Pair, name string, n int) []string {
+func closestNames(pairs []ixdiff.Pair, name string, n int) []string {
 	type scored struct {
 		name string
 		dist int
@@ -420,32 +380,26 @@ func levenshtein(a, b string) int {
 
 // writeFunc reports one function pair: a note for identical, added,
 // and removed functions, a full assembly diff for changed ones.
-func (c *cmdDiff) writeFunc(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary) error {
-	var a *analysis
+func (c *cmdDiff) writeFunc(w io.Writer, d *ixdiff.Diff, p ixdiff.Pair) error {
 	switch p.State {
-	case fndiff.StateIdentical:
+	case ixdiff.Identical:
 		fmt.Fprintf(w, "%s is byte-identical in both binaries\n", p.Name)
 		return nil
-	case fndiff.StateAdded, fndiff.StateRemoved:
-		fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta())
-		var err error
-		if a, err = listing(p, old, new, c.norm()); err != nil {
-			return err
-		}
+	case ixdiff.Added, ixdiff.Removed:
+		fmt.Fprintf(w, "%s is %v (%+d bytes)\n", p.Name, p.State, p.SizeDelta)
 	default:
 		if c.blocks {
-			return writeFuncBlocks(w, p, old, new, c.norm(), c.pal, c.sideBy)
+			return c.writeFuncBlocks(w, p)
 		}
-		analyzed, err := analyze([]*fndiff.Pair{p}, old, new, 1, c.norm())
-		if err != nil {
-			return err
-		}
-		a = analyzed[0]
+	}
+	lines, err := d.Lines(p)
+	if err != nil {
+		return err
 	}
 	if c.sideBy {
-		writeFuncDiffSide(w, a, c.pal)
+		writeFuncDiffSide(w, p, lines, c.pal)
 	} else {
-		writeFuncDiff(w, a, c.pal)
+		writeFuncDiff(w, p, lines, c.pal)
 	}
 	return nil
 }

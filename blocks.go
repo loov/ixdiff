@@ -7,7 +7,7 @@ import (
 
 	"github.com/loov/ixdiff/internal/disasm"
 	"github.com/loov/ixdiff/internal/fndiff"
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/ixdiff/ixdiff"
 )
 
 // A block is a run of instructions entered only at its first line: it
@@ -150,24 +150,32 @@ func matchBlocks(old, new []block) (moves []blockMove, restOld, restNew block) {
 // and without a profile of itself, 2026-07): moved-and-changed blocks
 // reduced diff lines by under 1% in 3 of 34 changed functions, so
 // fuzzy matching stays unimplemented.
-func writeFuncBlocks(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary, opts disasm.Options, pal palette, sideBy bool) error {
-	oldInsts, err := disasm.Decode(old.Arch, p.Old.Code(), p.Old.Addr, disasm.Lookup(old))
+func (c *cmdDiff) writeFuncBlocks(w io.Writer, p ixdiff.Pair) error {
+	old, new := c.objOld, c.objNew
+	oldName := p.Name
+	if p.RenamedFrom != "" {
+		oldName = p.RenamedFrom
+	}
+	oldF, newF := old.Funcs[oldName], new.Funcs[p.Name]
+	opts := disasm.Options{MaskSP: c.maskSP, Arch: old.Arch}
+
+	oldInsts, err := disasm.Decode(old.Arch, oldF.Code(), oldF.Addr, disasm.Lookup(old))
 	if err != nil {
 		return fmt.Errorf("disassembling old %s: %w", p.Name, err)
 	}
-	newInsts, err := disasm.Decode(new.Arch, p.New.Code(), p.New.Addr, disasm.Lookup(new))
+	newInsts, err := disasm.Decode(new.Arch, newF.Code(), newF.Addr, disasm.Lookup(new))
 	if err != nil {
 		return fmt.Errorf("disassembling new %s: %w", p.Name, err)
 	}
 	oldOpts, newOpts := opts, opts
 	oldOpts.IsAddr, newOpts.IsAddr = old.Contains, new.Contains
 	oldOpts.DataSym, newOpts.DataSym = old.DataSym, new.DataSym
-	oldNL := disasm.NormalizeLines(p.Old.Name, oldInsts, oldOpts)
-	newNL := disasm.NormalizeLines(p.New.Name, newInsts, newOpts)
-	oldLines, newLines := alignLabels(oldNL, newNL)
+	oldNL := disasm.NormalizeLines(oldF.Name, oldInsts, oldOpts)
+	newNL := disasm.NormalizeLines(newF.Name, newInsts, newOpts)
+	oldLines, newLines := fndiff.AlignLabels(oldNL, newNL)
 
-	oldBlocks := splitBlocks(oldLines, addrs(oldInsts), targetSet(oldNL), blockEnds(oldNL, oldInsts))
-	newBlocks := splitBlocks(newLines, addrs(newInsts), targetSet(newNL), blockEnds(newNL, newInsts))
+	oldBlocks := splitBlocks(oldLines, disasm.Addrs(oldInsts), targetSet(oldNL), blockEnds(oldNL, oldInsts))
+	newBlocks := splitBlocks(newLines, disasm.Addrs(newInsts), targetSet(newNL), blockEnds(newNL, newInsts))
 	moves, restOld, restNew := matchBlocks(oldBlocks, newBlocks)
 
 	writeDiffHeader(w, p)
@@ -180,16 +188,11 @@ func writeFuncBlocks(w io.Writer, p *fndiff.Pair, old, new *objfile.Binary, opts
 		}
 		return nil
 	}
-	rest := &analysis{
-		pair:     p,
-		edits:    fndiff.Diff(restOld.lines, restNew.lines),
-		oldAddrs: restOld.addrs,
-		newAddrs: restNew.addrs,
-	}
-	if sideBy {
-		writeHunksSide(w, rest, pal)
+	rest := resolveLines(fndiff.Diff(restOld.lines, restNew.lines), restOld.addrs, restNew.addrs)
+	if c.sideBy {
+		writeHunksSide(w, rest, c.pal)
 	} else {
-		writeHunks(w, rest, pal)
+		writeHunks(w, rest, c.pal)
 	}
 	return nil
 }

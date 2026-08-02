@@ -17,6 +17,38 @@ type Edit struct {
 	Text string
 }
 
+// Line is one edit with the addresses of the instructions it came
+// from, so every diff line can be cross-referenced with objdump or a
+// profiler. OldAddr is zero for inserts and NewAddr is zero for
+// deletes.
+type Line struct {
+	Op               Op
+	OldAddr, NewAddr uint64
+	Text             string
+}
+
+// ResolveLines resolves the addresses of each edit by walking the edit
+// script with one cursor per side. oldAddrs and newAddrs are the
+// instruction addresses backing the two sides of edits.
+func ResolveLines(edits []Edit, oldAddrs, newAddrs []uint64) []Line {
+	lines := make([]Line, len(edits))
+	oi, ni := 0, 0
+	for i, e := range edits {
+		switch e.Op {
+		case OpDelete:
+			lines[i] = Line{e.Op, oldAddrs[oi], 0, e.Text}
+			oi++
+		case OpInsert:
+			lines[i] = Line{e.Op, 0, newAddrs[ni], e.Text}
+			ni++
+		default:
+			lines[i] = Line{e.Op, oldAddrs[oi], newAddrs[ni], e.Text}
+			oi, ni = oi+1, ni+1
+		}
+	}
+	return lines
+}
+
 // Diff computes a minimal line diff from a to b. Equal inputs produce
 // all-OpEqual output.
 //

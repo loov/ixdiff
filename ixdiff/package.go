@@ -1,11 +1,9 @@
-package main
+package ixdiff
 
 import (
 	"cmp"
 	"slices"
 	"strings"
-
-	"github.com/loov/ixdiff/internal/fndiff"
 )
 
 // pkgOf extracts the package part of a Go symbol name: everything up
@@ -23,8 +21,8 @@ func pkgOf(name string) string {
 	return name
 }
 
-// pkgDelta aggregates the changes within one package.
-type pkgDelta struct {
+// PackageDelta aggregates the changes within one package.
+type PackageDelta struct {
 	Name      string `json:"name"`
 	SizeDelta int64  `json:"size_delta"`
 	InstDelta int    `json:"inst_delta"`
@@ -33,56 +31,49 @@ type pkgDelta struct {
 	Removed   int    `json:"removed"`
 }
 
-// pkgRollupCap bounds the package table; packages beyond it are rare
-// stragglers with tiny deltas.
-const pkgRollupCap = 20
-
-// pkgRollup aggregates non-identical, non-relocation-only pairs by
-// package, ordered by descending |size delta|.
-func pkgRollup(pairs []*fndiff.Pair, analyzed []*analysis) []pkgDelta {
-	noise := map[string]bool{}
-	for _, a := range analyzed {
-		if a.noise {
-			noise[a.pair.Name] = true
-		}
-	}
-	instDelta := instDeltas(analyzed)
-
-	byPkg := map[string]*pkgDelta{}
+// PackageDeltas aggregates pairs by package, ordered by descending
+// |size delta|, then name. Identical and relocation-only pairs are
+// excluded: they carry no code change.
+func PackageDeltas(pairs []Pair) []PackageDelta {
+	byPkg := map[string]*PackageDelta{}
 	for _, p := range pairs {
-		if p.State == fndiff.StateIdentical || noise[p.Name] {
+		if p.State == Identical || p.State == RelocationOnly {
 			continue
 		}
 		pkg := pkgOf(p.Name)
 		d := byPkg[pkg]
 		if d == nil {
-			d = &pkgDelta{Name: pkg}
+			d = &PackageDelta{Name: pkg}
 			byPkg[pkg] = d
 		}
-		d.SizeDelta += p.SizeDelta()
-		d.InstDelta += instDelta[p.Name]
+		d.SizeDelta += p.SizeDelta
+		d.InstDelta += p.InstDelta
 		switch p.State {
-		case fndiff.StateChanged:
+		case Changed:
 			d.Changed++
-		case fndiff.StateAdded:
+		case Added:
 			d.Added++
-		case fndiff.StateRemoved:
+		case Removed:
 			d.Removed++
 		}
 	}
 
-	out := make([]pkgDelta, 0, len(byPkg))
+	out := make([]PackageDelta, 0, len(byPkg))
 	for _, d := range byPkg {
 		out = append(out, *d)
 	}
-	slices.SortFunc(out, func(a, b pkgDelta) int {
+	slices.SortFunc(out, func(a, b PackageDelta) int {
 		if d := abs64(b.SizeDelta) - abs64(a.SizeDelta); d != 0 {
 			return int(d)
 		}
 		return cmp.Compare(a.Name, b.Name)
 	})
-	if len(out) > pkgRollupCap {
-		out = out[:pkgRollupCap]
-	}
 	return out
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

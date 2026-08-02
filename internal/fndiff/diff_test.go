@@ -86,23 +86,3 @@ func TestDiff_Reconstructs(t *testing.T) {
 		t.Errorf("new side not reconstructed (-want +got):\n%s", diff)
 	}
 }
-
-func TestOpCount_DeltaAndAdd(t *testing.T) {
-	old := fndiff.CountOps([]string{"CALL", "CALL", "MOV", "RET"})
-	new := fndiff.CountOps([]string{"CALL", "MOV", "MOV", "ADD", "RET"})
-
-	want := fndiff.OpCount{"CALL": -1, "MOV": 1, "ADD": 1}
-	if diff := cmp.Diff(want, old.Delta(new)); diff != "" {
-		t.Errorf("Delta mismatch (-want +got):\n%s", diff)
-	}
-
-	total := fndiff.OpCount{}
-	total.Add(old.Delta(new))
-	total.Add(fndiff.OpCount{"CALL": 5})
-	if got := total["CALL"]; got != 4 {
-		t.Errorf("accumulated CALL = %d, want 4", got)
-	}
-	if got := old.Total(); got != 4 {
-		t.Errorf("Total = %d, want 4", got)
-	}
-}

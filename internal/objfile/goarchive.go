@@ -46,7 +46,7 @@ const (
 // openGoArchive loads a Go compile archive. See the file comment above
 // for what is and is not populated.
 func openGoArchive(data []byte) (*Binary, error) {
-	bin := &Binary{Funcs: map[string]*Func{}}
+	bin := &Binary{Funcs: map[string]*Func{}, NoLayout: true}
 	off := uint64(len("!<arch>\n"))
 	for off < uint64(len(data)) {
 		hdr := sectionSlice(data, off, 60)

@@ -71,7 +71,7 @@ func TestWasm_PadShiftIsPureNoise(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Decode new %s: %v", p.Name, err)
 		}
-		oldLines, newLines := alignLabels(
+		oldLines, newLines := fndiff.AlignLabels(
 			disasm.NormalizeLines(p.Old.Name, oldInsts, disasm.Options{IsAddr: old.Contains}),
 			disasm.NormalizeLines(p.New.Name, newInsts, disasm.Options{IsAddr: new.Contains}))
 		if slices.Equal(oldLines, newLines) {
@@ -110,7 +110,7 @@ func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) int {
 		if err != nil {
 			t.Fatalf("Decode new %s: %v", p.Name, err)
 		}
-		oldLines, newLines := alignLabels(
+		oldLines, newLines := fndiff.AlignLabels(
 			disasm.NormalizeLines(p.Old.Name, oldInsts, disasm.Options{IsAddr: old.Contains, DataSym: old.DataSym}),
 			disasm.NormalizeLines(p.New.Name, newInsts, disasm.Options{IsAddr: new.Contains, DataSym: new.DataSym}))
 		if !slices.Equal(oldLines, newLines) {

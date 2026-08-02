@@ -1,11 +1,12 @@
-package fndiff
+package ixdiff
 
 // OpCount is an instruction-mnemonic histogram. Keys are mnemonics
-// like "CALL", values are occurrence counts.
+// like "CALL", values are occurrence counts; in a delta the values are
+// count changes and may be negative.
 type OpCount map[string]int
 
-// CountOps builds a histogram of the mnemonics of ops.
-func CountOps(ops []string) OpCount {
+// countOps builds a histogram of the mnemonics of ops.
+func countOps(ops []string) OpCount {
 	counts := make(OpCount, 64)
 	for _, op := range ops {
 		counts[op]++

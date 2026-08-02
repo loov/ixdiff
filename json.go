@@ -4,20 +4,19 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/loov/ixdiff/internal/fndiff"
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/ixdiff/ixdiff"
 )
 
 // jsonSummary is the machine-readable form of the summary report.
 type jsonSummary struct {
-	Old       string           `json:"old"`
-	New       string           `json:"new"`
-	Arch      string           `json:"arch"`
-	Counts    jsonCounts       `json:"counts"`
-	SizeDelta int64            `json:"size_delta"`
-	OpDelta   fndiff.OpCount   `json:"op_delta,omitempty"`
-	Packages  []pkgDelta       `json:"packages,omitempty"`
-	Functions []jsonFuncReport `json:"functions"`
+	Old       string                `json:"old"`
+	New       string                `json:"new"`
+	Arch      string                `json:"arch"`
+	Counts    jsonCounts            `json:"counts"`
+	SizeDelta int64                 `json:"size_delta"`
+	OpDelta   ixdiff.OpCount        `json:"op_delta,omitempty"`
+	Packages  []ixdiff.PackageDelta `json:"packages,omitempty"`
+	Functions []jsonFuncReport      `json:"functions"`
 }
 
 // jsonCounts is the pair classification breakdown. Relocations counts
@@ -41,7 +40,7 @@ type jsonFuncReport struct {
 	SizeDelta      int64          `json:"size_delta"`
 	InstDelta      *int           `json:"inst_delta,omitempty"`
 	RelocationOnly bool           `json:"relocation_only,omitempty"`
-	OpDelta        fndiff.OpCount `json:"op_delta,omitempty"`
+	OpDelta        ixdiff.OpCount `json:"op_delta,omitempty"`
 	Diff           []jsonDiffLine `json:"diff,omitempty"`
 }
 
@@ -54,47 +53,37 @@ type jsonDiffLine struct {
 }
 
 // opNames maps edit kinds to their JSON names.
-var opNames = map[fndiff.Op]string{
-	fndiff.OpEqual:  "equal",
-	fndiff.OpDelete: "delete",
-	fndiff.OpInsert: "insert",
+var opNames = map[ixdiff.EditOp]string{
+	ixdiff.Equal:  "equal",
+	ixdiff.Delete: "delete",
+	ixdiff.Insert: "insert",
 }
 
 // writeJSONSummary emits the summary report as one JSON object. With
 // --all every ranked function carries its diff (changed) or full
 // listing (added, removed).
-func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, pairs []*fndiff.Pair, analyzed []*analysis, old, new *objfile.Binary) error {
-	byName := map[string]*analysis{}
-	noise := 0
-	totalOps := fndiff.OpCount{}
-	for _, a := range analyzed {
-		byName[a.pair.Name] = a
-		if a.noise {
-			noise++
-			continue
-		}
-		totalOps.Add(a.opDelta)
-	}
-	totalOps.Compact()
-	counts := map[fndiff.State]int{}
+func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, d *ixdiff.Diff, pairs []ixdiff.Pair) error {
+	counts := map[ixdiff.State]int{}
 	var sizeDelta int64
+	totalOps := ixdiff.OpCount{}
 	for _, p := range pairs {
 		counts[p.State]++
-		sizeDelta += p.SizeDelta()
+		sizeDelta += p.SizeDelta
+		totalOps.Add(p.OpDelta)
 	}
+	totalOps.Compact()
 
-	instDelta := instDeltas(analyzed)
-	ranked := rankPairs(pairs, instDelta, c.top, c.sortBy, c.stateSet)
+	ranked := rankPairs(pairs, c.top, c.sortBy, c.stateSet)
 	funcs := make([]jsonFuncReport, 0, len(ranked))
 	for _, p := range ranked {
-		a := byName[p.Name]
-		if c.all && (p.State == fndiff.StateAdded || p.State == fndiff.StateRemoved) {
+		var lines []ixdiff.Line
+		if c.all {
 			var err error
-			if a, err = listing(p, old, new, c.norm()); err != nil {
+			if lines, err = d.Lines(p); err != nil {
 				return err
 			}
 		}
-		funcs = append(funcs, funcReport(p, a, c.all))
+		funcs = append(funcs, funcReport(p, lines, true, c.all))
 	}
 
 	return encodeJSON(w, jsonSummary{
@@ -102,43 +91,74 @@ func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, pairs []*fndiff.Pai
 		New:  c.newPath,
 		Arch: arch,
 		Counts: jsonCounts{
-			Identical:   counts[fndiff.StateIdentical],
-			Changed:     counts[fndiff.StateChanged] - noise,
-			Relocations: noise,
-			Added:       counts[fndiff.StateAdded],
-			Removed:     counts[fndiff.StateRemoved],
+			Identical:   counts[ixdiff.Identical],
+			Changed:     counts[ixdiff.Changed],
+			Relocations: counts[ixdiff.RelocationOnly],
+			Added:       counts[ixdiff.Added],
+			Removed:     counts[ixdiff.Removed],
 		},
 		SizeDelta: sizeDelta,
 		OpDelta:   totalOps,
-		Packages:  pkgRollup(pairs, analyzed),
+		Packages:  cappedPackages(pairs),
 		Functions: funcs,
 	})
 }
 
-// funcReport converts one analyzed pair; withDiff includes the edit
-// script for changed functions.
-func funcReport(p *fndiff.Pair, a *analysis, withDiff bool) jsonFuncReport {
+// writeJSONFuncs emits the --fn reports as one JSON array. A uniquely
+// matched changed function includes its full diff; ambiguous matches
+// are listed without one, mirroring the text output.
+func (c *cmdDiff) writeJSONFuncs(w io.Writer, d *ixdiff.Diff, pairs []ixdiff.Pair) error {
+	var reports []jsonFuncReport
+	for _, name := range c.fns {
+		matches, err := matchFuncs(pairs, name)
+		if err != nil {
+			return err
+		}
+		withDiff := len(matches) == 1
+		for _, p := range matches {
+			var lines []ixdiff.Line
+			if withDiff {
+				if lines, err = d.Lines(p); err != nil {
+					return err
+				}
+			}
+			// Changed functions always report their stats; added and
+			// removed ones only when uniquely matched, matching the
+			// text output that lists ambiguous matches without detail.
+			withStats := withDiff || p.State == ixdiff.Changed
+			reports = append(reports, funcReport(p, lines, withStats, withDiff))
+		}
+	}
+	return encodeJSON(w, reports)
+}
+
+// funcReport converts one pair; withStats includes the instruction
+// deltas and withDiff the edit script.
+func funcReport(p ixdiff.Pair, lines []ixdiff.Line, withStats, withDiff bool) jsonFuncReport {
 	r := jsonFuncReport{
 		Name:        p.Name,
 		RenamedFrom: p.RenamedFrom,
-		State:       p.State.String(),
-		SizeDelta:   p.SizeDelta(),
+		State:       displayState(p.State),
+		SizeDelta:   p.SizeDelta,
 	}
-	if a == nil {
+	switch p.State {
+	case ixdiff.Identical:
+		return r
+	case ixdiff.RelocationOnly:
+		r.RelocationOnly = true
 		return r
 	}
-	r.RelocationOnly = a.noise
-	if !a.noise {
-		r.InstDelta = &a.instDelta
-		r.OpDelta = a.opDelta
+	if withStats {
+		r.InstDelta = &p.InstDelta
+		r.OpDelta = p.OpDelta
 	}
-	if withDiff && !a.noise {
-		for _, l := range diffLines(a) {
+	if withDiff {
+		for _, l := range lines {
 			r.Diff = append(r.Diff, jsonDiffLine{
-				Op:      opNames[l.op],
-				OldAddr: l.oldAddr,
-				NewAddr: l.newAddr,
-				Text:    l.text,
+				Op:      opNames[l.Op],
+				OldAddr: l.OldAddr,
+				NewAddr: l.NewAddr,
+				Text:    l.Text,
 			})
 		}
 	}

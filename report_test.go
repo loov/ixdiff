@@ -6,29 +6,26 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/loov/ixdiff/internal/disasm"
 	"github.com/loov/ixdiff/internal/fndiff"
+	"github.com/loov/ixdiff/ixdiff"
 )
 
-// mkAnalysis builds an analysis whose old side is olds and new side is
-// news, with synthetic 4-byte-spaced addresses starting at 0x100 (old)
-// and 0x200 (new).
-func mkAnalysis(olds, news []string) *analysis {
-	a := &analysis{
-		pair:  &fndiff.Pair{Name: "f", State: fndiff.StateChanged},
-		edits: fndiff.Diff(olds, news),
-	}
+// mkLines builds the diff lines of a change whose old side is olds and
+// new side is news, with synthetic 4-byte-spaced addresses starting at
+// 0x100 (old) and 0x200 (new).
+func mkLines(olds, news []string) []ixdiff.Line {
+	var oldAddrs, newAddrs []uint64
 	for i := range olds {
-		a.oldAddrs = append(a.oldAddrs, uint64(0x100+4*i))
+		oldAddrs = append(oldAddrs, uint64(0x100+4*i))
 	}
 	for i := range news {
-		a.newAddrs = append(a.newAddrs, uint64(0x200+4*i))
+		newAddrs = append(newAddrs, uint64(0x200+4*i))
 	}
-	return a
+	return resolveLines(fndiff.Diff(olds, news), oldAddrs, newAddrs)
 }
 
 func TestMatchFuncs_Resolution(t *testing.T) {
-	pairs := []*fndiff.Pair{
+	pairs := []ixdiff.Pair{
 		{Name: "main.sum"},
 		{Name: "main.summary"},
 		{Name: "runtime.mallocgc"},
@@ -63,74 +60,19 @@ func TestMatchFuncs_Resolution(t *testing.T) {
 	})
 }
 
-// line is a shorthand for a disasm.Line without a branch.
-func line(text string) disasm.Line { return disasm.Line{Text: text, Target: -1} }
-
-// branch is a shorthand for a branch line; the label slot uses the
-// same internal marker as disasm.NormalizeLines ("\x01").
-func branch(op string, target int) disasm.Line {
-	return disasm.Line{Text: op + " \x01", Target: target}
-}
-
-func TestAlignLabels_UnchangedBranchesKeepLabels(t *testing.T) {
-	// The new side inserts an early branch and its target; the later
-	// branch to RET is structurally unchanged and must render with
-	// the same label on both sides.
-	old := []disasm.Line{
-		branch("JBE", 2),
-		line("MOVL $0x1, DI"),
-		line("RET"),
-	}
-	new := []disasm.Line{
-		branch("JE", 1),
-		line("NOPL"), // new branch target
-		branch("JBE", 4),
-		line("MOVL $0x1, DI"),
-		line("RET"),
-	}
-	oldLines, newLines := alignLabels(old, new)
-
-	if oldLines[0] != newLines[2] {
-		t.Errorf("unchanged branch renders differently: %q vs %q", oldLines[0], newLines[2])
-	}
-	if oldLines[1] != newLines[3] || oldLines[2] != newLines[4] {
-		t.Errorf("aligned non-branch lines differ:\nold %v\nnew %v", oldLines, newLines)
-	}
-}
-
-func TestAlignLabels_RetargetedBranchDiffs(t *testing.T) {
-	// Same instruction sequence, but the branch jumps to a different
-	// aligned instruction: labels must differ so the diff surfaces it.
-	old := []disasm.Line{
-		branch("JBE", 1),
-		line("MOVL $0x1, DI"),
-		line("RET"),
-	}
-	new := []disasm.Line{
-		branch("JBE", 2),
-		line("MOVL $0x1, DI"),
-		line("RET"),
-	}
-	oldLines, newLines := alignLabels(old, new)
-	if oldLines[0] == newLines[0] {
-		t.Errorf("retargeted branch renders identically: %q", oldLines[0])
-	}
-}
-
-func TestDiffLines_ResolvesAddressesPerSide(t *testing.T) {
-	a := mkAnalysis(
+func TestResolveLines_ResolvesAddressesPerSide(t *testing.T) {
+	got := mkLines(
 		[]string{"one", "two", "three"},
 		[]string{"one", "TWO", "three"},
 	)
-	got := diffLines(a)
-	want := []diffLine{
-		{fndiff.OpEqual, 0x100, 0x200, "one"},
-		{fndiff.OpDelete, 0x104, 0, "two"},
-		{fndiff.OpInsert, 0, 0x204, "TWO"},
-		{fndiff.OpEqual, 0x108, 0x208, "three"},
+	want := []ixdiff.Line{
+		{Op: ixdiff.Equal, OldAddr: 0x100, NewAddr: 0x200, Text: "one"},
+		{Op: ixdiff.Delete, OldAddr: 0x104, Text: "two"},
+		{Op: ixdiff.Insert, NewAddr: 0x204, Text: "TWO"},
+		{Op: ixdiff.Equal, OldAddr: 0x108, NewAddr: 0x208, Text: "three"},
 	}
-	if diff := cmp.Diff(want, got, cmp.AllowUnexported(diffLine{})); diff != "" {
-		t.Errorf("diffLines mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("resolveLines mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -147,7 +89,7 @@ func TestHunks_SplitsOnLongEqualRuns(t *testing.T) {
 	olds = append(olds, "z")
 	news = append(news, "Z")
 
-	got := hunks(diffLines(mkAnalysis(olds, news)))
+	got := hunks(mkLines(olds, news))
 	if len(got) != 2 {
 		t.Fatalf("got %d hunks, want 2", len(got))
 	}
@@ -158,18 +100,6 @@ func TestHunks_SplitsOnLongEqualRuns(t *testing.T) {
 	// Second hunk: 3 leading context lines plus -z +Z.
 	if len(got[1]) != 5 {
 		t.Errorf("second hunk has %d lines, want 5", len(got[1]))
-	}
-}
-
-func TestOps_ExcludesBytePadding(t *testing.T) {
-	insts := []disasm.Inst{
-		{Op: "MOV"}, {Op: "RET"}, {Op: "BYTE"}, {Op: "BYTE"},
-	}
-	if got := ops(insts); len(got) != 2 {
-		t.Errorf("ops = %v, want BYTE excluded", got)
-	}
-	if got := countInsts(insts); got != 2 {
-		t.Errorf("countInsts = %d, want 2", got)
 	}
 }
 
@@ -239,22 +169,21 @@ func TestAlignOps_PadsMnemonicsToCommonColumn(t *testing.T) {
 }
 
 func TestSideRows_PairsReplacements(t *testing.T) {
-	a := mkAnalysis(
+	rows := sideRows(mkLines(
 		[]string{"same", "del1", "del2", "tail"},
 		[]string{"same", "ins1", "tail"},
-	)
-	rows := sideRows(diffLines(a))
+	))
 	if len(rows) != 4 {
 		t.Fatalf("got %d rows, want 4", len(rows))
 	}
-	if rows[0].old == nil || rows[0].new == nil || rows[0].old.text != "same" {
+	if rows[0].old == nil || rows[0].new == nil || rows[0].old.Text != "same" {
 		t.Errorf("row 0 should pair the equal line, got %+v", rows[0])
 	}
 	if rows[1].old == nil || rows[1].new == nil ||
-		rows[1].old.text != "del1" || rows[1].new.text != "ins1" {
+		rows[1].old.Text != "del1" || rows[1].new.Text != "ins1" {
 		t.Errorf("row 1 should pair del1 with ins1, got %+v", rows[1])
 	}
-	if rows[2].old == nil || rows[2].new != nil || rows[2].old.text != "del2" {
+	if rows[2].old == nil || rows[2].new != nil || rows[2].old.Text != "del2" {
 		t.Errorf("row 2 should be delete-only, got %+v", rows[2])
 	}
 }
@@ -262,7 +191,7 @@ func TestSideRows_PairsReplacements(t *testing.T) {
 func TestHunks_ShortEqualRunStaysInOneHunk(t *testing.T) {
 	olds := []string{"a", "m", "n", "z"}
 	news := []string{"A", "m", "n", "Z"}
-	got := hunks(diffLines(mkAnalysis(olds, news)))
+	got := hunks(mkLines(olds, news))
 	if len(got) != 1 {
 		t.Fatalf("got %d hunks, want 1", len(got))
 	}

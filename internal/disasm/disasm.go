@@ -336,6 +336,15 @@ func (r *codeReader) ReadAt(p []byte, off int64) (int, error) {
 	return n, nil
 }
 
+// Addrs extracts the addresses of insts.
+func Addrs(insts []Inst) []uint64 {
+	out := make([]uint64, len(insts))
+	for i, in := range insts {
+		out[i] = in.Addr
+	}
+	return out
+}
+
 // byteInst represents undecodable bytes as a BYTE pseudo-instruction.
 func byteInst(addr uint64, raw []byte) Inst {
 	return Inst{Addr: addr, Len: len(raw), Op: "BYTE", Text: fmt.Sprintf("BYTE %#x", raw)}
