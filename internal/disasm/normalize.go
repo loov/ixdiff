@@ -264,6 +264,15 @@ var spDisp = map[objfile.Arch]*regexp.Regexp{
 	objfile.ArchS390X:   spPattern(`\(R15\)|\(R0\)\(R15\*1\)`),
 }
 
+// IsStackRef reports whether a rendered operand is a stack-pointer
+// displacement on the given architecture, such as 0x10(SP) on amd64 or
+// -112(RSP) on arm64. Wasm has no stack-pointer register, so every
+// operand reports false.
+func IsStackRef(arch objfile.Arch, arg string) bool {
+	re := spDisp[arch]
+	return re != nil && re.MatchString(arg)
+}
+
 // wasmTypeIdx matches a WAT type-index immediate, as printed for
 // call_indirect and typed blocks.
 var wasmTypeIdx = regexp.MustCompile(`\(type \d+\)`)

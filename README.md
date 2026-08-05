@@ -21,6 +21,7 @@ Summary of everything that changed:
 $ ixdiff tsgo.v0 tsgo.v3
 functions: 5044 identical, 232 changed (+17229 relocations), 5 added, 8 removed
 total text size delta: +6000 bytes
+total spill delta: +181 stack-referencing instructions
 
 instruction delta by opcode:
     +362 MOV
@@ -29,15 +30,15 @@ instruction delta by opcode:
     ...
 
 package delta:
-       bytes    insts  changed  added  removed  package
-       +2784     +699       15      0        2  syscall
-        +992     +247        2      2        0  fmt
+       bytes    insts   spills  changed  added  removed  package
+       +2784     +699     +102       15      0        2  syscall
+        +992     +247      +31        2      2        0  fmt
     ...
 
 top 100 by size delta:
-       bytes    insts state     function
-       +1216     +304 changed   syscall.forkExec
-        +608     +152 added     fmt.wrapErrorf
+       bytes    insts   spills state     function
+       +1216     +304      +48 changed   syscall.forkExec
+        +608     +152      +19 added     fmt.wrapErrorf
     ...
 ```
 
@@ -84,7 +85,7 @@ Other flags:
 
 | Flag | Effect |
 | --- | --- |
-| `--top N`, `--sort size\|insts\|name` | ranking table length and order |
+| `--top N`, `--sort size\|insts\|spills\|name` | ranking table length and order |
 | `--filter net/url`, `--filter ~^runtime\.` | scope the summary by substring or regexp (repeatable) |
 | `--state changed\|added\|removed` | limit tables to functions in this state (repeatable) |
 | `--all` | follow the summary with a diff of every ranked function |

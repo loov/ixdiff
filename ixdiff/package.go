@@ -23,12 +23,13 @@ func pkgOf(name string) string {
 
 // PackageDelta aggregates the changes within one package.
 type PackageDelta struct {
-	Name      string `json:"name"`
-	SizeDelta int64  `json:"size_delta"`
-	InstDelta int    `json:"inst_delta"`
-	Changed   int    `json:"changed"`
-	Added     int    `json:"added"`
-	Removed   int    `json:"removed"`
+	Name       string `json:"name"`
+	SizeDelta  int64  `json:"size_delta"`
+	InstDelta  int    `json:"inst_delta"`
+	SpillDelta int    `json:"spill_delta"`
+	Changed    int    `json:"changed"`
+	Added      int    `json:"added"`
+	Removed    int    `json:"removed"`
 }
 
 // PackageDeltas aggregates pairs by package, ordered by descending
@@ -48,6 +49,7 @@ func PackageDeltas(pairs []Pair) []PackageDelta {
 		}
 		d.SizeDelta += p.SizeDelta
 		d.InstDelta += p.InstDelta
+		d.SpillDelta += p.SpillDelta
 		switch p.State {
 		case Changed:
 			d.Changed++

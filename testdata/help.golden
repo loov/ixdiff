@@ -9,7 +9,7 @@ Flags:
         --fn string        diff the function with this name or substring (repeatable) (repeated)
         --filter string    limit the summary to functions containing this substring, ~regexp (repeatable) (repeated)
         --top int          number of functions to list in ranking tables (default 100)
-        --sort string      ranking order for tables: size, insts, or name (default "size")
+        --sort string      ranking order for tables: size, insts, spills, or name (default "size")
         --state string     limit tables to functions in this state: changed, added, or removed (repeatable) (repeated)
         --mask-sp          ignore stack-offset shifts caused by frame size changes
         --json             emit machine-readable JSON instead of text

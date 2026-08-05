@@ -203,6 +203,18 @@ func (f *Func) Ops() (OpCount, error) {
 	return countOps(ops(insts)), nil
 }
 
+// Spills disassembles the function and counts instructions with a
+// stack-pointer-relative memory operand: register spills and reloads,
+// but also stack-passed call arguments and register saves, which use
+// the same addressing. See countSpills.
+func (f *Func) Spills() (int, error) {
+	insts, err := f.decode()
+	if err != nil {
+		return 0, err
+	}
+	return countSpills(f.bin.obj.Arch, insts), nil
+}
+
 // decode disassembles the function with the binary's memoized lookup.
 func (f *Func) decode() ([]disasm.Inst, error) {
 	return disasm.Decode(f.bin.obj.Arch, f.Code(), f.Addr, f.bin.symLookup())

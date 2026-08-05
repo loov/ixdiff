@@ -87,6 +87,11 @@ type Pair struct {
 	// OpDelta is the per-mnemonic instruction count change; nil for
 	// identical and relocation-only pairs.
 	OpDelta OpCount
+	// SpillDelta is the change in the number of instructions with a
+	// stack-pointer-relative memory operand — spills and reloads, but
+	// also stack-passed call arguments and register saves; zero for
+	// identical and relocation-only pairs.
+	SpillDelta int
 }
 
 // Options selects optional comparison behavior. The zero value is the
@@ -176,6 +181,7 @@ func Compare(old, new *Binary, opts *Options) (*Diff, error) {
 			} else {
 				p.InstDelta = a.instDelta
 				p.OpDelta = a.opDelta
+				p.SpillDelta = a.spillDelta
 				if fp.State == fndiff.StateChanged {
 					d.lines[fp.Name] = toLines(fndiff.ResolveLines(a.edits, a.oldAddrs, a.newAddrs))
 				}
@@ -279,6 +285,8 @@ type analysis struct {
 	instDelta int
 	// opDelta is the per-mnemonic count change.
 	opDelta OpCount
+	// spillDelta is the change in stack-referencing instructions.
+	spillDelta int
 	// noise reports that the normalized instructions are equal:
 	// the byte difference was pure relocation noise.
 	noise bool
@@ -321,9 +329,10 @@ func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts disasm.Opti
 			}
 
 			a := &analysis{
-				pair:      p,
-				instDelta: countInsts(newInsts) - countInsts(oldInsts),
-				opDelta:   countOps(ops(oldInsts)).Delta(countOps(ops(newInsts))),
+				pair:       p,
+				instDelta:  countInsts(newInsts) - countInsts(oldInsts),
+				opDelta:    countOps(ops(oldInsts)).Delta(countOps(ops(newInsts))),
+				spillDelta: countSpills(oldObj.Arch, newInsts) - countSpills(oldObj.Arch, oldInsts),
 			}
 			if p.State == fndiff.StateChanged {
 				oldOpts, newOpts := opts, opts

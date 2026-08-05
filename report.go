@@ -53,10 +53,12 @@ func cappedPackages(pairs []ixdiff.Pair) []ixdiff.PackageDelta {
 func writeSummary(w io.Writer, pairs []ixdiff.Pair, top int, sortBy string, states map[ixdiff.State]bool) {
 	counts := map[ixdiff.State]int{}
 	var sizeDelta int64
+	spillDelta := 0
 	totalOps := ixdiff.OpCount{}
 	for _, p := range pairs {
 		counts[p.State]++
 		sizeDelta += p.SizeDelta
+		spillDelta += p.SpillDelta
 		totalOps.Add(p.OpDelta)
 	}
 	totalOps.Compact()
@@ -65,6 +67,7 @@ func writeSummary(w io.Writer, pairs []ixdiff.Pair, top int, sortBy string, stat
 		counts[ixdiff.Identical], counts[ixdiff.Changed], counts[ixdiff.RelocationOnly],
 		counts[ixdiff.Added], counts[ixdiff.Removed])
 	fmt.Fprintf(w, "total text size delta: %+d bytes\n", sizeDelta)
+	fmt.Fprintf(w, "total spill delta: %+d stack-referencing instructions\n", spillDelta)
 
 	if len(totalOps) > 0 {
 		fmt.Fprintf(w, "\ninstruction delta by opcode:\n")
@@ -75,11 +78,11 @@ func writeSummary(w io.Writer, pairs []ixdiff.Pair, top int, sortBy string, stat
 
 	if rollup := cappedPackages(pairs); len(rollup) > 0 {
 		fmt.Fprintf(w, "\npackage delta:\n")
-		fmt.Fprintf(w, "  %10s %8s %8s %6s %8s  %s\n",
-			"bytes", "insts", "changed", "added", "removed", "package")
+		fmt.Fprintf(w, "  %10s %8s %8s %8s %6s %8s  %s\n",
+			"bytes", "insts", "spills", "changed", "added", "removed", "package")
 		for _, d := range rollup {
-			fmt.Fprintf(w, "  %+10d %+8d %8d %6d %8d  %s\n",
-				d.SizeDelta, d.InstDelta, d.Changed, d.Added, d.Removed, d.Name)
+			fmt.Fprintf(w, "  %+10d %+8d %+8d %8d %6d %8d  %s\n",
+				d.SizeDelta, d.InstDelta, d.SpillDelta, d.Changed, d.Added, d.Removed, d.Name)
 		}
 	}
 
@@ -122,8 +125,12 @@ func rankPairs(pairs []ixdiff.Pair, top int, sortBy string, states map[ixdiff.St
 			if p.InstDelta == 0 {
 				continue
 			}
+		case "spills":
+			if p.SpillDelta == 0 {
+				continue
+			}
 		case "name":
-			if p.SizeDelta == 0 && p.InstDelta == 0 {
+			if p.SizeDelta == 0 && p.InstDelta == 0 && p.SpillDelta == 0 {
 				continue
 			}
 		}
@@ -134,6 +141,8 @@ func rankPairs(pairs []ixdiff.Pair, top int, sortBy string, states map[ixdiff.St
 		switch sortBy {
 		case "insts":
 			d = abs(b.InstDelta) - abs(a.InstDelta)
+		case "spills":
+			d = abs(b.SpillDelta) - abs(a.SpillDelta)
 		case "name":
 		default:
 			d = int(abs64(b.SizeDelta) - abs64(a.SizeDelta))
@@ -162,17 +171,18 @@ func writeTop(w io.Writer, pairs []ixdiff.Pair, top int, sortBy string, states m
 		order = "name"
 	}
 	fmt.Fprintf(w, "\ntop %d by %s:\n", len(ranked), order)
-	fmt.Fprintf(w, "  %10s %8s %-9s %s\n", "bytes", "insts", "state", "function")
+	fmt.Fprintf(w, "  %10s %8s %8s %-9s %s\n", "bytes", "insts", "spills", "state", "function")
 	for _, p := range ranked {
-		insts := "-"
+		insts, spills := "-", "-"
 		if p.State != ixdiff.RelocationOnly {
 			insts = fmt.Sprintf("%+d", p.InstDelta)
+			spills = fmt.Sprintf("%+d", p.SpillDelta)
 		}
 		name := p.Name
 		if p.RenamedFrom != "" {
 			name += " (was " + p.RenamedFrom + ")"
 		}
-		fmt.Fprintf(w, "  %+10d %8s %-9s %s\n", p.SizeDelta, insts, displayState(p.State), name)
+		fmt.Fprintf(w, "  %+10d %8s %8s %-9s %s\n", p.SizeDelta, insts, spills, displayState(p.State), name)
 	}
 }
 

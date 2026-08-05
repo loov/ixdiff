@@ -259,8 +259,8 @@ func TestPipeline_StateFilterAndNameSort(t *testing.T) {
 	}
 	var names []string
 	for _, line := range strings.Split(table, "\n")[2:] {
-		if fields := strings.Fields(line); len(fields) >= 4 {
-			names = append(names, fields[3])
+		if fields := strings.Fields(line); len(fields) >= 5 {
+			names = append(names, fields[4])
 		}
 	}
 	if len(names) < 2 || !slices.IsSorted(names) {
