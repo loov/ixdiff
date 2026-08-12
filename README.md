@@ -21,7 +21,7 @@ Summary of everything that changed:
 $ ixdiff tsgo.v0 tsgo.v3
 functions: 5044 identical, 232 changed (+17229 relocations), 5 added, 8 removed
 total text size delta: +6000 bytes
-total spill delta: +181 stack-referencing instructions
+total spill delta: +181 stack accesses
 
 instruction delta by opcode:
     +362 MOV

@@ -67,7 +67,7 @@ func writeSummary(w io.Writer, pairs []ixdiff.Pair, top int, sortBy string, stat
 		counts[ixdiff.Identical], counts[ixdiff.Changed], counts[ixdiff.RelocationOnly],
 		counts[ixdiff.Added], counts[ixdiff.Removed])
 	fmt.Fprintf(w, "total text size delta: %+d bytes\n", sizeDelta)
-	fmt.Fprintf(w, "total spill delta: %+d stack-referencing instructions\n", spillDelta)
+	fmt.Fprintf(w, "total spill delta: %+d stack accesses\n", spillDelta)
 
 	if len(totalOps) > 0 {
 		fmt.Fprintf(w, "\ninstruction delta by opcode:\n")

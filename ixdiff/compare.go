@@ -87,10 +87,11 @@ type Pair struct {
 	// OpDelta is the per-mnemonic instruction count change; nil for
 	// identical and relocation-only pairs.
 	OpDelta OpCount
-	// SpillDelta is the change in the number of instructions with a
-	// stack-pointer-relative memory operand — spills and reloads, but
-	// also stack-passed call arguments and register saves; zero for
-	// identical and relocation-only pairs.
+	// SpillDelta is the change in the number of stack accesses,
+	// weighted by the registers each access moves — spills and
+	// reloads, but also stack-passed call arguments and register
+	// saves; zero for identical and relocation-only pairs. See
+	// [Func.Spills].
 	SpillDelta int
 }
 
@@ -285,7 +286,7 @@ type analysis struct {
 	instDelta int
 	// opDelta is the per-mnemonic count change.
 	opDelta OpCount
-	// spillDelta is the change in stack-referencing instructions.
+	// spillDelta is the change in weighted stack accesses.
 	spillDelta int
 	// noise reports that the normalized instructions are equal:
 	// the byte difference was pure relocation noise.

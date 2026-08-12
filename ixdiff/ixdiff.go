@@ -203,10 +203,11 @@ func (f *Func) Ops() (OpCount, error) {
 	return countOps(ops(insts)), nil
 }
 
-// Spills disassembles the function and counts instructions with a
-// stack-pointer-relative memory operand: register spills and reloads,
-// but also stack-passed call arguments and register saves, which use
-// the same addressing. See countSpills.
+// Spills disassembles the function and counts its stack accesses,
+// weighted by the registers each access moves: register spills and
+// reloads, but also stack-passed call arguments and register saves,
+// which use the same addressing. Accesses made through a scratch
+// register holding a stack address are included. See countSpills.
 func (f *Func) Spills() (int, error) {
 	insts, err := f.decode()
 	if err != nil {
