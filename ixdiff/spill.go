@@ -1,6 +1,7 @@
 package ixdiff
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -16,36 +17,58 @@ var pairOps = map[string]bool{
 	"FLDPD": true, "FLDPQ": true, "FSTPD": true, "FSTPQ": true,
 }
 
+// multiOps are the s390x load/store-multiple mnemonics; a stack access
+// by one of them weighs the length of its register range.
+var multiOps = map[string]bool{
+	"LMG": true, "LMY": true, "STMG": true, "STMY": true,
+}
+
 // leaOps are the mnemonics whose memory-shaped operand is address
 // arithmetic, not a memory access.
 var leaOps = map[string]bool{"LEAQ": true, "LEAL": true, "LEAW": true}
+
+// addOps are the mnemonics that yield a stack address when a source
+// operand is the stack pointer: the arm64 ADD $off, RSP, R27 form, and
+// the riscv64/loong64 form where the offset arrives in the destination
+// register via a preceding LUI/LU12IW.
+var addOps = map[string]bool{
+	"ADD": true, "SUB": true,
+	"ADDV": true, "ADDVU": true, "SUBV": true, "SUBVU": true,
+}
+
+// movOps are the plain register moves that copy the stack pointer into
+// another register, per architecture rendering.
+var movOps = map[string]bool{"MOV": true, "MOVD": true, "MOVV": true}
 
 // spName is the stack-pointer register as it is rendered in register
 // (non-memory) operands, for the architectures whose compilers
 // materialize stack addresses into scratch registers. Empty for the
 // rest: their stack accesses are all direct displacements.
 var spName = map[objfile.Arch]string{
-	objfile.ArchAMD64: "SP",
-	objfile.Arch386:   "SP",
-	objfile.ArchARM64: "RSP",
+	objfile.ArchAMD64:   "SP",
+	objfile.Arch386:     "SP",
+	objfile.ArchARM64:   "RSP",
+	objfile.ArchRISCV64: "X2",
+	objfile.ArchLoong64: "R3",
 }
 
 // countSpills weighs the stack accesses of insts: each instruction
 // with a stack-pointer-relative memory operand counts the number of
-// registers it moves (2 for arm64 paired loads and stores, 1
-// otherwise). The Go compiler addresses spill slots off the stack
-// pointer, so this captures register spills and reloads — but also
-// stack-passed call arguments and register saves, which use the same
-// addressing. The absolute count is therefore a heuristic; the delta
-// between two builds of the same code isolates the code generation
-// change.
+// registers it moves (2 for arm64 paired loads and stores, the range
+// length for s390x load/store-multiple, 1 otherwise). The Go compiler
+// addresses spill slots off the stack pointer, so this captures
+// register spills and reloads — but also stack-passed call arguments
+// and register saves, which use the same addressing. The absolute
+// count is therefore a heuristic; the delta between two builds of the
+// same code isolates the code generation change.
 //
 // Frames beyond the reach of a direct displacement are addressed
 // through a scratch register (arm64 ADD $off, RSP, R27; amd64
-// LEAQ off(SP), DI): the defining instruction counts zero — it moves
-// no data — and memory operands through the scratch register count as
-// stack accesses until the register is overwritten or a call clobbers
-// it.
+// LEAQ off(SP), DI; riscv64 LUI $k, X31 then ADD X2, X31, X31;
+// loong64 LU12IW $k, R30 then ADDV R3, R30): the defining instructions
+// count zero — they move no data — and memory operands through the
+// scratch register count as stack accesses until the register is
+// overwritten or a call clobbers it.
 func countSpills(arch objfile.Arch, insts []disasm.Inst) int {
 	n := 0
 	// alias is the set of registers currently holding a stack address.
@@ -74,11 +97,7 @@ func countSpills(arch objfile.Arch, insts []disasm.Inst) int {
 		if !leaOps[op] {
 			for _, arg := range args {
 				if disasm.IsStackRef(arch, arg) || alias[memBase(arg)] {
-					if pairOps[op] {
-						n += 2
-					} else {
-						n++
-					}
+					n += weight(op, args)
 					break
 				}
 			}
@@ -88,22 +107,48 @@ func countSpills(arch objfile.Arch, insts []disasm.Inst) int {
 			continue
 		}
 		switch {
-		case op == "CALL":
+		case op == "CALL" || op == "JAL" || op == "JALR":
 			clear(alias)
-		case (op == "ADD" || op == "SUB") && len(args) == 3 &&
-			strings.HasPrefix(args[0], "$") && args[1] == sp && args[2] != sp:
-			alias[args[2]] = true
-		case op == "MOVD" && len(args) == 2 && args[0] == sp && args[1] != sp:
+		case addOps[op] && len(args) >= 2 && last(args) != sp && slices.Contains(args[:len(args)-1], sp):
+			alias[last(args)] = true
+		case movOps[op] && len(args) == 2 && args[0] == sp && args[1] != sp:
 			alias[args[1]] = true
 		case leaOps[op] && len(args) == 2 && disasm.IsStackRef(arch, args[0]):
 			alias[args[1]] = true
 		case len(args) > 0:
 			// The destination is the last operand in Go syntax; any
 			// other write to a scratch register ends its alias.
-			delete(alias, args[len(args)-1])
+			delete(alias, last(args))
 		}
 	}
 	return n
+}
+
+// weight is the number of registers a stack access by op moves.
+func weight(op string, args []string) int {
+	if pairOps[op] {
+		return 2
+	}
+	if multiOps[op] && len(args) == 3 {
+		if a, aok := regNum(args[0]); aok {
+			if b, bok := regNum(args[1]); bok {
+				// The register range wraps modulo 16: STMG R14, R2
+				// stores R14, R15, R0, R1, R2.
+				return (b-a+16)%16 + 1
+			}
+		}
+	}
+	return 1
+}
+
+// regNum returns the number of a rendered s390x general register.
+func regNum(s string) (int, bool) {
+	num, ok := strings.CutPrefix(s, "R")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(num)
+	return n, err == nil && n < 16
 }
 
 // memBase returns the base register of a rendered memory operand such
@@ -122,4 +167,9 @@ func memBase(arg string) string {
 		}
 	}
 	return arg[i+1 : len(arg)-1]
+}
+
+// last returns the final operand: the destination in Go syntax.
+func last(args []string) string {
+	return args[len(args)-1]
 }

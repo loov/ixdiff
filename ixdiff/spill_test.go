@@ -117,6 +117,48 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 			want: 0,
 		},
 		{
+			name: "riscv64 scratch-mediated big-frame store",
+			arch: objfile.ArchRISCV64,
+			insts: []disasm.Inst{
+				{Op: "LUI", Text: "LUI $4294967292, X31"},
+				{Op: "ADD", Text: "ADD X2, X31, X31"},
+				{Op: "MOV", Text: "MOV X1, 1200(X31)"},
+				{Op: "MOV", Text: "MOV X1, 16(X2)"},
+			},
+			want: 2,
+		},
+		{
+			name: "riscv64 JAL clobbers scratch aliases",
+			arch: objfile.ArchRISCV64,
+			insts: []disasm.Inst{
+				{Op: "ADD", Text: "ADD X2, X31, X31"},
+				{Op: "JAL", Text: "JAL X5, runtime.morestack_noctxt.abi0(SB)"},
+				{Op: "MOV", Text: "MOV X1, 1200(X31)"},
+			},
+			want: 0,
+		},
+		{
+			name: "loong64 scratch-mediated big-frame store and reload",
+			arch: objfile.ArchLoong64,
+			insts: []disasm.Inst{
+				{Op: "LU12IW", Text: "LU12IW $-5, R30"},
+				{Op: "ADDV", Text: "ADDV R3, R30"},
+				{Op: "MOVV", Text: "MOVV R1, 1200(R30)"},
+				{Op: "MOVV", Text: "MOVV -1208(R30), R7"},
+			},
+			want: 2,
+		},
+		{
+			name: "s390x store-multiple counts its register range",
+			arch: objfile.ArchS390X,
+			insts: []disasm.Inst{
+				{Op: "STMG", Text: "STMG R1, R4, 48(R15)"},
+				{Op: "LMG", Text: "LMG R14, R2, 216(R15)"},
+				{Op: "STMG", Text: "STMG R1, R2, (R7)"},
+			},
+			want: 9, // 4 + 5 (R14, R15, R0, R1, R2), non-stack STMG excluded
+		},
+		{
 			name: "wasm has no stack pointer",
 			arch: objfile.ArchWasm,
 			insts: []disasm.Inst{
