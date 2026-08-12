@@ -13,3 +13,8 @@ archives:
 
 changelog:
   use: git
+
+# The release body is the tag annotation followed by the generated
+# commit list.
+release:
+  header: "{{ .TagBody }}"
