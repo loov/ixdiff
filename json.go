@@ -15,6 +15,7 @@ type jsonSummary struct {
 	Counts     jsonCounts            `json:"counts"`
 	SizeDelta  int64                 `json:"size_delta"`
 	SpillDelta int                   `json:"spill_delta"`
+	SlotDelta  int                   `json:"slot_delta"`
 	OpDelta    ixdiff.OpCount        `json:"op_delta,omitempty"`
 	Packages   []ixdiff.PackageDelta `json:"packages,omitempty"`
 	Functions  []jsonFuncReport      `json:"functions"`
@@ -41,6 +42,7 @@ type jsonFuncReport struct {
 	SizeDelta      int64          `json:"size_delta"`
 	InstDelta      *int           `json:"inst_delta,omitempty"`
 	SpillDelta     *int           `json:"spill_delta,omitempty"`
+	SlotDelta      *int           `json:"slot_delta,omitempty"`
 	RelocationOnly bool           `json:"relocation_only,omitempty"`
 	OpDelta        ixdiff.OpCount `json:"op_delta,omitempty"`
 	Diff           []jsonDiffLine `json:"diff,omitempty"`
@@ -67,12 +69,13 @@ var opNames = map[ixdiff.EditOp]string{
 func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, d *ixdiff.Diff, pairs []ixdiff.Pair) error {
 	counts := map[ixdiff.State]int{}
 	var sizeDelta int64
-	spillDelta := 0
+	spillDelta, slotDelta := 0, 0
 	totalOps := ixdiff.OpCount{}
 	for _, p := range pairs {
 		counts[p.State]++
 		sizeDelta += p.SizeDelta
 		spillDelta += p.SpillDelta
+		slotDelta += p.SlotDelta
 		totalOps.Add(p.OpDelta)
 	}
 	totalOps.Compact()
@@ -103,6 +106,7 @@ func (c *cmdDiff) writeJSONSummary(w io.Writer, arch string, d *ixdiff.Diff, pai
 		},
 		SizeDelta:  sizeDelta,
 		SpillDelta: spillDelta,
+		SlotDelta:  slotDelta,
 		OpDelta:    totalOps,
 		Packages:   cappedPackages(pairs),
 		Functions:  funcs,
@@ -156,6 +160,7 @@ func funcReport(p ixdiff.Pair, lines []ixdiff.Line, withStats, withDiff bool) js
 	if withStats {
 		r.InstDelta = &p.InstDelta
 		r.SpillDelta = &p.SpillDelta
+		r.SlotDelta = &p.SlotDelta
 		r.OpDelta = p.OpDelta
 	}
 	if withDiff {

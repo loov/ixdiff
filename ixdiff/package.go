@@ -27,6 +27,7 @@ type PackageDelta struct {
 	SizeDelta  int64  `json:"size_delta"`
 	InstDelta  int    `json:"inst_delta"`
 	SpillDelta int    `json:"spill_delta"`
+	SlotDelta  int    `json:"slot_delta"`
 	Changed    int    `json:"changed"`
 	Added      int    `json:"added"`
 	Removed    int    `json:"removed"`
@@ -50,6 +51,7 @@ func PackageDeltas(pairs []Pair) []PackageDelta {
 		d.SizeDelta += p.SizeDelta
 		d.InstDelta += p.InstDelta
 		d.SpillDelta += p.SpillDelta
+		d.SlotDelta += p.SlotDelta
 		switch p.State {
 		case Changed:
 			d.Changed++

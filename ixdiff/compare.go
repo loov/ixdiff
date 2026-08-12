@@ -87,12 +87,17 @@ type Pair struct {
 	// OpDelta is the per-mnemonic instruction count change; nil for
 	// identical and relocation-only pairs.
 	OpDelta OpCount
-	// SpillDelta is the change in the number of stack accesses,
-	// weighted by the registers each access moves — spills and
-	// reloads, but also stack-passed call arguments and register
-	// saves; zero for identical and relocation-only pairs. See
-	// [Func.Spills].
+	// SpillDelta is the change in the number of registers moved to or
+	// from the stack — spills and reloads, but also stack-passed call
+	// arguments and register saves; zero for identical and
+	// relocation-only pairs. See [Func.Spills].
 	SpillDelta int
+	// SlotDelta is the change in the number of 8-byte stack slots
+	// touched by those accesses. Unlike SpillDelta it is neutral under
+	// pair/vector/scalar lowering conversions: it tracks memory
+	// traffic, not register-pressure events. Zero for identical and
+	// relocation-only pairs. See [Func.StackSlots].
+	SlotDelta int
 }
 
 // Options selects optional comparison behavior. The zero value is the
@@ -183,6 +188,7 @@ func Compare(old, new *Binary, opts *Options) (*Diff, error) {
 				p.InstDelta = a.instDelta
 				p.OpDelta = a.opDelta
 				p.SpillDelta = a.spillDelta
+				p.SlotDelta = a.slotDelta
 				if fp.State == fndiff.StateChanged {
 					d.lines[fp.Name] = toLines(fndiff.ResolveLines(a.edits, a.oldAddrs, a.newAddrs))
 				}
@@ -286,8 +292,9 @@ type analysis struct {
 	instDelta int
 	// opDelta is the per-mnemonic count change.
 	opDelta OpCount
-	// spillDelta is the change in weighted stack accesses.
-	spillDelta int
+	// spillDelta is the change in registers moved to or from the
+	// stack; slotDelta the change in 8-byte stack slots touched.
+	spillDelta, slotDelta int
 	// noise reports that the normalized instructions are equal:
 	// the byte difference was pure relocation noise.
 	noise bool
@@ -329,11 +336,14 @@ func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts disasm.Opti
 				}
 			}
 
+			oldSpills, oldSlots := countSpills(oldObj.Arch, oldInsts)
+			newSpills, newSlots := countSpills(oldObj.Arch, newInsts)
 			a := &analysis{
 				pair:       p,
 				instDelta:  countInsts(newInsts) - countInsts(oldInsts),
 				opDelta:    countOps(ops(oldInsts)).Delta(countOps(ops(newInsts))),
-				spillDelta: countSpills(oldObj.Arch, newInsts) - countSpills(oldObj.Arch, oldInsts),
+				spillDelta: newSpills - oldSpills,
+				slotDelta:  newSlots - oldSlots,
 			}
 			if p.State == fndiff.StateChanged {
 				oldOpts, newOpts := opts, opts

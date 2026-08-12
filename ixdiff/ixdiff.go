@@ -203,17 +203,31 @@ func (f *Func) Ops() (OpCount, error) {
 	return countOps(ops(insts)), nil
 }
 
-// Spills disassembles the function and counts its stack accesses,
-// weighted by the registers each access moves: register spills and
-// reloads, but also stack-passed call arguments and register saves,
-// which use the same addressing. Accesses made through a scratch
-// register holding a stack address are included. See countSpills.
+// Spills disassembles the function and counts the registers its stack
+// accesses move: register spills and reloads, but also stack-passed
+// call arguments and register saves, which use the same addressing.
+// Accesses made through a scratch register holding a stack address
+// are included. See countSpills.
 func (f *Func) Spills() (int, error) {
 	insts, err := f.decode()
 	if err != nil {
 		return 0, err
 	}
-	return countSpills(f.bin.obj.Arch, insts), nil
+	spills, _ := countSpills(f.bin.obj.Arch, insts)
+	return spills, nil
+}
+
+// StackSlots disassembles the function and counts the 8-byte stack
+// slots its stack accesses touch. Unlike [Func.Spills] it measures
+// memory traffic, so pair/vector/scalar lowering conversions with the
+// same traffic count the same. See countSpills.
+func (f *Func) StackSlots() (int, error) {
+	insts, err := f.decode()
+	if err != nil {
+		return 0, err
+	}
+	_, slots := countSpills(f.bin.obj.Arch, insts)
+	return slots, nil
 }
 
 // decode disassembles the function with the binary's memoized lookup.

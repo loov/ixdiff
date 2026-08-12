@@ -7,12 +7,13 @@ import (
 	"github.com/loov/ixdiff/internal/objfile"
 )
 
-func TestCountSpills_WeightsStackAccesses(t *testing.T) {
+func TestCountSpills_WeightsRegistersAndSlots(t *testing.T) {
 	tests := []struct {
-		name  string
-		arch  objfile.Arch
-		insts []disasm.Inst
-		want  int
+		name       string
+		arch       objfile.Arch
+		insts      []disasm.Inst
+		wantSpills int
+		wantSlots  int
 	}{
 		{
 			name: "amd64 store, reload, and non-stack ops",
@@ -24,7 +25,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "LEAQ", Text: "LEAQ 0x8(AX), BX"},
 				{Op: "RET", Text: "RET"},
 			},
-			want: 2,
+			wantSpills: 2,
+			wantSlots:  2,
 		},
 		{
 			name: "amd64 zero-offset and both-operand count once",
@@ -33,7 +35,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "MOVQ", Text: "MOVQ (SP), AX"},
 				{Op: "ADDQ", Text: "ADDQ 0x8(SP), 0x10(SP)"},
 			},
-			want: 2,
+			wantSpills: 2,
+			wantSlots:  2,
 		},
 		{
 			name: "amd64 excludes BYTE padding",
@@ -41,7 +44,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 			insts: []disasm.Inst{
 				{Op: "BYTE", Text: "BYTE 0x10(SP)"},
 			},
-			want: 0,
+			wantSpills: 0,
+			wantSlots:  0,
 		},
 		{
 			name: "amd64 LEA is address arithmetic, store through it counts",
@@ -50,7 +54,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "LEAQ", Text: "LEAQ 0x10(SP), DI"},
 				{Op: "MOVQ", Text: "MOVQ AX, (DI)"},
 			},
-			want: 1,
+			wantSpills: 1,
+			wantSlots:  1,
 		},
 		{
 			name: "amd64 overwriting the scratch register ends its alias",
@@ -60,16 +65,18 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "MOVQ", Text: "MOVQ $0x1, DI"},
 				{Op: "MOVQ", Text: "MOVQ AX, (DI)"},
 			},
-			want: 0,
+			wantSpills: 0,
+			wantSlots:  0,
 		},
 		{
-			name: "amd64 zeroing via X15 weighs two slots, vector spill one",
+			name: "amd64 vector store moves one register, touches two slots",
 			arch: objfile.ArchAMD64,
 			insts: []disasm.Inst{
 				{Op: "MOVUPS", Text: "MOVUPS X15, 0x28(SP)"},
 				{Op: "MOVUPS", Text: "MOVUPS X0, 0x38(SP)"},
 			},
-			want: 3,
+			wantSpills: 2,
+			wantSlots:  4,
 		},
 		{
 			name: "arm64 RSP displacement",
@@ -78,16 +85,19 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "MOVD", Text: "MOVD R0, -112(RSP)"},
 				{Op: "MOVD", Text: "MOVD R0, R1"},
 			},
-			want: 1,
+			wantSpills: 1,
+			wantSlots:  1,
 		},
 		{
-			name: "arm64 paired store counts both registers",
+			name: "arm64 pairs weigh registers and slots by width",
 			arch: objfile.ArchARM64,
 			insts: []disasm.Inst{
 				{Op: "STP", Text: "STP (R0, R1), 8(RSP)"},
+				{Op: "STPW", Text: "STPW (R0, R1), 8(RSP)"},
 				{Op: "FLDPQ", Text: "FLDPQ 16(RSP), (F0, F1)"},
 			},
-			want: 4,
+			wantSpills: 6, // 2 registers each
+			wantSlots:  7, // 2 + 1 + 4
 		},
 		{
 			name: "arm64 scratch-mediated pair matches direct split stores",
@@ -96,7 +106,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "ADD", Text: "ADD $600, RSP, R27"},
 				{Op: "STP", Text: "STP (R0, R1), (R27)"},
 			},
-			want: 2, // same as MOVD R0, 600(RSP); MOVD R1, 608(RSP)
+			wantSpills: 2, // same as MOVD R0, 600(RSP); MOVD R1, 608(RSP)
+			wantSlots:  2,
 		},
 		{
 			name: "arm64 SP copy makes the register a stack base",
@@ -105,7 +116,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "MOVD", Text: "MOVD RSP, R20"},
 				{Op: "MOVD", Text: "MOVD R0, -8(R20)"},
 			},
-			want: 1,
+			wantSpills: 1,
+			wantSlots:  1,
 		},
 		{
 			name: "arm64 call clobbers scratch aliases",
@@ -115,7 +127,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "CALL", Text: "CALL runtime.morestack(SB)"},
 				{Op: "MOVD", Text: "MOVD R0, (R27)"},
 			},
-			want: 0,
+			wantSpills: 0,
+			wantSlots:  0,
 		},
 		{
 			name: "arm64 non-stack pair does not count",
@@ -123,7 +136,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 			insts: []disasm.Inst{
 				{Op: "STP", Text: "STP (R0, R1), (R2)"},
 			},
-			want: 0,
+			wantSpills: 0,
+			wantSlots:  0,
 		},
 		{
 			name: "riscv64 scratch-mediated big-frame store",
@@ -134,7 +148,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "MOV", Text: "MOV X1, 1200(X31)"},
 				{Op: "MOV", Text: "MOV X1, 16(X2)"},
 			},
-			want: 2,
+			wantSpills: 2,
+			wantSlots:  2,
 		},
 		{
 			name: "riscv64 JAL clobbers scratch aliases",
@@ -144,7 +159,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "JAL", Text: "JAL X5, runtime.morestack_noctxt.abi0(SB)"},
 				{Op: "MOV", Text: "MOV X1, 1200(X31)"},
 			},
-			want: 0,
+			wantSpills: 0,
+			wantSlots:  0,
 		},
 		{
 			name: "loong64 scratch-mediated big-frame store and reload",
@@ -155,7 +171,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "MOVV", Text: "MOVV R1, 1200(R30)"},
 				{Op: "MOVV", Text: "MOVV -1208(R30), R7"},
 			},
-			want: 2,
+			wantSpills: 2,
+			wantSlots:  2,
 		},
 		{
 			name: "s390x store-multiple counts its register range",
@@ -165,7 +182,8 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 				{Op: "LMG", Text: "LMG R14, R2, 216(R15)"},
 				{Op: "STMG", Text: "STMG R1, R2, (R7)"},
 			},
-			want: 9, // 4 + 5 (R14, R15, R0, R1, R2), non-stack STMG excluded
+			wantSpills: 9, // 4 + 5 (R14, R15, R0, R1, R2), non-stack STMG excluded
+			wantSlots:  9,
 		},
 		{
 			name: "wasm has no stack pointer",
@@ -173,13 +191,16 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 			insts: []disasm.Inst{
 				{Op: "i32.const", Text: "i32.const 16"},
 			},
-			want: 0,
+			wantSpills: 0,
+			wantSlots:  0,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := countSpills(tt.arch, tt.insts); got != tt.want {
-				t.Errorf("countSpills = %d, want %d", got, tt.want)
+			spills, slots := countSpills(tt.arch, tt.insts)
+			if spills != tt.wantSpills || slots != tt.wantSlots {
+				t.Errorf("countSpills = (%d, %d), want (%d, %d)",
+					spills, slots, tt.wantSpills, tt.wantSlots)
 			}
 		})
 	}

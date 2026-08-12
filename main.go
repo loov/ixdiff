@@ -116,7 +116,7 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 		clingy.Repeated).([]string)
 	c.top = params.Flag("top", "number of functions to list in ranking tables", 100,
 		clingy.Transform(strconv.Atoi)).(int)
-	c.sortBy = params.Flag("sort", "ranking order for tables: size, insts, spills, or name", "size").(string)
+	c.sortBy = params.Flag("sort", "ranking order for tables: size, insts, spills, slots, or name", "size").(string)
 	c.states = params.Flag("state", "limit tables to functions in this state: changed, added, or removed (repeatable)", []string(nil),
 		clingy.Repeated).([]string)
 	c.maskSP = params.Flag("mask-sp", "ignore stack-offset shifts caused by frame size changes", false,
@@ -144,9 +144,9 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		return nil
 	}
 	switch c.sortBy {
-	case "size", "insts", "spills", "name":
+	case "size", "insts", "spills", "slots", "name":
 	default:
-		return fmt.Errorf("unknown sort order %q, expected size, insts, spills, or name", c.sortBy)
+		return fmt.Errorf("unknown sort order %q, expected size, insts, spills, slots, or name", c.sortBy)
 	}
 	for _, s := range c.states {
 		switch s {

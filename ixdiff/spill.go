@@ -9,25 +9,26 @@ import (
 	"github.com/loov/ixdiff/internal/objfile"
 )
 
-// pairOps are the arm64 mnemonics that move two registers per memory
-// access; a stack access by one of them weighs 2 instead of 1.
-var pairOps = map[string]bool{
-	"LDP": true, "LDPW": true, "LDPSW": true,
-	"STP": true, "STPW": true,
-	"FLDPD": true, "FLDPQ": true, "FSTPD": true, "FSTPQ": true,
+// pairSlots maps the arm64 mnemonics that move two registers per
+// memory access to the number of 8-byte stack slots they touch: 1 for
+// the 32-bit pairs, 2 for the 64-bit ones, 4 for the 128-bit ones.
+var pairSlots = map[string]int{
+	"LDPW": 1, "STPW": 1, "LDPSW": 1,
+	"LDP": 2, "STP": 2,
+	"FLDPD": 2, "FSTPD": 2,
+	"FLDPQ": 4, "FSTPQ": 4,
 }
 
-// multiOps are the s390x load/store-multiple mnemonics; a stack access
-// by one of them weighs the length of its register range.
-var multiOps = map[string]bool{
-	"LMG": true, "LMY": true, "STMG": true, "STMY": true,
-}
+// multiOps are the s390x 64-bit load/store-multiple mnemonics; a stack
+// access by one of them moves and touches the length of its register
+// range. The 32-bit STM/STMY forms are absent: Go's s390x linkage
+// never emits them.
+var multiOps = map[string]bool{"LMG": true, "STMG": true}
 
-// zero16Ops are the amd64 16-byte vector moves; storing the fixed
-// zero register X15 through one is the compiler's idiom for zeroing
-// two 8-byte stack slots at once and weighs 2. A vector spill from
-// any other register stays at 1: it moves one register.
-var zero16Ops = map[string]bool{"MOVUPS": true, "MOVOU": true, "MOVO": true}
+// vec16Ops are the amd64 16-byte vector moves: one register, two
+// slots. The compiler also uses them to zero or copy stack memory in
+// 16-byte blocks (MOVUPS X15, 0x28(SP) with the fixed zero register).
+var vec16Ops = map[string]bool{"MOVUPS": true, "MOVOU": true, "MOVO": true}
 
 // leaOps are the mnemonics whose memory-shaped operand is address
 // arithmetic, not a memory access.
@@ -58,15 +59,22 @@ var spName = map[objfile.Arch]string{
 	objfile.ArchLoong64: "R3",
 }
 
-// countSpills weighs the stack accesses of insts: each instruction
-// with a stack-pointer-relative memory operand counts the number of
-// registers it moves (2 for arm64 paired loads and stores, the range
-// length for s390x load/store-multiple, 1 otherwise). The Go compiler
-// addresses spill slots off the stack pointer, so this captures
-// register spills and reloads — but also stack-passed call arguments
-// and register saves, which use the same addressing. The absolute
-// count is therefore a heuristic; the delta between two builds of the
-// same code isolates the code generation change.
+// countSpills weighs the stack accesses of insts two ways.
+//
+// spills counts the registers moved to or from the stack: 2 for arm64
+// paired loads and stores, the range length for s390x load/store-
+// multiple, 1 otherwise. It tracks register-pressure events — spills
+// and reloads, but also stack-passed call arguments and register
+// saves, which use the same addressing.
+//
+// slots counts the 8-byte stack slots each access touches: 2 for a
+// 16-byte access (arm64 STP, amd64 MOVUPS), 4 for a 32-byte FSTPQ,
+// 1 for anything 8 bytes or narrower. It tracks memory traffic and is
+// neutral under pair/vector/scalar lowering conversions that spills is
+// not.
+//
+// Either absolute count is a heuristic; the delta between two builds
+// of the same code isolates the code generation change.
 //
 // Frames beyond the reach of a direct displacement are addressed
 // through a scratch register (arm64 ADD $off, RSP, R27; amd64
@@ -81,8 +89,7 @@ var spName = map[objfile.Arch]string{
 // slots, and counting them would mostly add loop noise. Bulk-memory
 // operations (runtime.duffzero/duffcopy calls, REP MOVS) move stack
 // bytes with no per-site stack operand and are likewise invisible.
-func countSpills(arch objfile.Arch, insts []disasm.Inst) int {
-	n := 0
+func countSpills(arch objfile.Arch, insts []disasm.Inst) (spills, slots int) {
 	// alias is the set of registers currently holding a stack address.
 	// ponytail: linear scan, no control flow — the compiler defines the
 	// scratch register right before its uses, so joins never matter.
@@ -109,7 +116,9 @@ func countSpills(arch objfile.Arch, insts []disasm.Inst) int {
 		if !leaOps[op] {
 			for _, arg := range args {
 				if disasm.IsStackRef(arch, arg) || alias[memBase(arg)] {
-					n += weight(op, args)
+					regs, touched := weight(op, args)
+					spills += regs
+					slots += touched
 					break
 				}
 			}
@@ -133,27 +142,29 @@ func countSpills(arch objfile.Arch, insts []disasm.Inst) int {
 			delete(alias, last(args))
 		}
 	}
-	return n
+	return spills, slots
 }
 
-// weight is the number of registers a stack access by op moves.
-func weight(op string, args []string) int {
-	if pairOps[op] {
-		return 2
+// weight is the number of registers a stack access by op moves and
+// the number of 8-byte stack slots it touches.
+func weight(op string, args []string) (regs, slots int) {
+	if s, ok := pairSlots[op]; ok {
+		return 2, s
 	}
-	if zero16Ops[op] && len(args) > 0 && args[0] == "X15" {
-		return 2
+	if vec16Ops[op] {
+		return 1, 2
 	}
 	if multiOps[op] && len(args) == 3 {
 		if a, aok := regNum(args[0]); aok {
 			if b, bok := regNum(args[1]); bok {
 				// The register range wraps modulo 16: STMG R14, R2
 				// stores R14, R15, R0, R1, R2.
-				return (b-a+16)%16 + 1
+				r := (b-a+16)%16 + 1
+				return r, r
 			}
 		}
 	}
-	return 1
+	return 1, 1
 }
 
 // regNum returns the number of a rendered s390x general register.
