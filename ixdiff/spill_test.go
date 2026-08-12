@@ -63,6 +63,15 @@ func TestCountSpills_WeightsStackAccesses(t *testing.T) {
 			want: 0,
 		},
 		{
+			name: "amd64 zeroing via X15 weighs two slots, vector spill one",
+			arch: objfile.ArchAMD64,
+			insts: []disasm.Inst{
+				{Op: "MOVUPS", Text: "MOVUPS X15, 0x28(SP)"},
+				{Op: "MOVUPS", Text: "MOVUPS X0, 0x38(SP)"},
+			},
+			want: 3,
+		},
+		{
 			name: "arm64 RSP displacement",
 			arch: objfile.ArchARM64,
 			insts: []disasm.Inst{

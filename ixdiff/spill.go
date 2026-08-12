@@ -23,6 +23,12 @@ var multiOps = map[string]bool{
 	"LMG": true, "LMY": true, "STMG": true, "STMY": true,
 }
 
+// zero16Ops are the amd64 16-byte vector moves; storing the fixed
+// zero register X15 through one is the compiler's idiom for zeroing
+// two 8-byte stack slots at once and weighs 2. A vector spill from
+// any other register stays at 1: it moves one register.
+var zero16Ops = map[string]bool{"MOVUPS": true, "MOVOU": true, "MOVO": true}
+
 // leaOps are the mnemonics whose memory-shaped operand is address
 // arithmetic, not a memory access.
 var leaOps = map[string]bool{"LEAQ": true, "LEAL": true, "LEAW": true}
@@ -69,6 +75,12 @@ var spName = map[objfile.Arch]string{
 // count zero — they move no data — and memory operands through the
 // scratch register count as stack accesses until the register is
 // overwritten or a call clobbers it.
+//
+// Known gaps: register-indexed stack operands (0x10(SP)(BX*8),
+// (RSP)(R2)) count zero — they are stack-array traffic, not spill
+// slots, and counting them would mostly add loop noise. Bulk-memory
+// operations (runtime.duffzero/duffcopy calls, REP MOVS) move stack
+// bytes with no per-site stack operand and are likewise invisible.
 func countSpills(arch objfile.Arch, insts []disasm.Inst) int {
 	n := 0
 	// alias is the set of registers currently holding a stack address.
@@ -127,6 +139,9 @@ func countSpills(arch objfile.Arch, insts []disasm.Inst) int {
 // weight is the number of registers a stack access by op moves.
 func weight(op string, args []string) int {
 	if pairOps[op] {
+		return 2
+	}
+	if zero16Ops[op] && len(args) > 0 && args[0] == "X15" {
 		return 2
 	}
 	if multiOps[op] && len(args) == 3 {
