@@ -137,14 +137,18 @@ func TestNormalize_RISCV64Operands(t *testing.T) {
 		{Addr: 0x2000, Len: 4, Op: "AUIPC", Text: "AUIPC $228, X5"},
 		{Addr: 0x2004, Len: 4, Op: "MOV", Text: "MOV 16(X5), X10"},
 		{Addr: 0x2008, Len: 4, Op: "ADDI", Text: "ADDI $-192, X5, X7"},
-		{Addr: 0x200c, Len: 4, Op: "BNE", Text: "BNE X6, X7, 2(PC)"},
-		{Addr: 0x2010, Len: 4, Op: "MOV", Text: "MOV $42, X10"},
-		{Addr: 0x2014, Len: 4, Op: "JALR", Text: "RET"},
+		{Addr: 0x200c, Len: 4, Op: "MOV", Text: "MOV X5, X8"},
+		{Addr: 0x2010, Len: 4, Op: "MOV", Text: "MOV X9, X11"},
+		{Addr: 0x2014, Len: 4, Op: "BNE", Text: "BNE X6, X7, 2(PC)"},
+		{Addr: 0x2018, Len: 4, Op: "MOV", Text: "MOV $42, X10"},
+		{Addr: 0x201c, Len: 4, Op: "JALR", Text: "RET"},
 	}
 	want := []string{
 		"AUIPC $<page>, X5",    // upper immediate masked
 		"MOV <lo12>(X5), X10",  // load off the AUIPC'd register masked
 		"ADDI $<lo12>, X5, X7", // low immediate completing the pair masked
+		"ADDI $<lo12>, X5, X8", // MOV rendering of the $0 completion
+		"MOV X9, X11",          // ordinary register move kept
 		"BNE X6, X7, L1",       // branch -> label of RET
 		"MOV $42, X10",         // plain immediate kept
 		"RET",

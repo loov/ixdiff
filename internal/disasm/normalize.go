@@ -108,6 +108,17 @@ func NormalizeLines(name string, insts []Inst, opts Options) []Line {
 			lines[i] = Line{Text: text, Target: -1}
 			continue
 		}
+		if m := rvMovReg.FindStringSubmatch(in.Text); m != nil {
+			// riscv64 renders the zero-displacement completion of an
+			// AUIPC pair, ADDI $0, Xn, Xd, as MOV Xn, Xd, hiding the
+			// symbol. Put the ADDI form back so the pair rule in arg
+			// resolves it; otherwise a symbol landing exactly on the
+			// AUIPC page boundary diffs against the same reference
+			// written with a nonzero offset.
+			if _, tracked := adrp[m[1]]; tracked {
+				in.Op, in.Text = "ADDI", "ADDI $0, "+m[1]+", "+m[2]
+			}
+		}
 		op, rest, hasArgs := strings.Cut(in.Text, " ")
 		if !hasArgs {
 			lines[i] = Line{Text: in.Text, Target: -1}
@@ -234,6 +245,8 @@ var (
 	// is optional: masking must treat 0(Rn) and (Rn) alike or an
 	// offset shifting to or from zero leaks through.
 	dispArg = regexp.MustCompile(`^(-?\d+)?\((R\d+|RSP|X\d+)\)$`)
+	// riscv64 register move, the rendering of ADDI $0, Xn, Xd.
+	rvMovReg = regexp.MustCompile(`^MOV (X\d+), (X\d+)$`)
 )
 
 // spPattern builds a stack-displacement matcher for the given register
