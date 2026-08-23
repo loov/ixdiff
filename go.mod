@@ -6,7 +6,7 @@ require (
 	github.com/eliben/watgo v0.8.0
 	github.com/google/go-cmp v0.7.0
 	github.com/zeebo/clingy v0.0.0-20260119143559-4d23ffb0341b
-	golang.org/x/arch v0.29.0
+	golang.org/x/arch v0.30.0
 	golang.org/x/sync v0.22.0
 )
 
