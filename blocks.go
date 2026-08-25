@@ -159,11 +159,11 @@ func (c *cmdDiff) writeFuncBlocks(w io.Writer, p ixdiff.Pair) error {
 	oldF, newF := old.Func(oldName), new.Func(p.Name)
 	opts := norm.Options{MaskSP: c.maskSP, Arch: old.Arch}
 
-	oldInsts, err := norm.Disassemble(old, oldF)
+	oldInsts, err := old.Disassemble(oldF)
 	if err != nil {
 		return fmt.Errorf("disassembling old %s: %w", p.Name, err)
 	}
-	newInsts, err := norm.Disassemble(new, newF)
+	newInsts, err := new.Disassemble(newF)
 	if err != nil {
 		return fmt.Errorf("disassembling new %s: %w", p.Name, err)
 	}

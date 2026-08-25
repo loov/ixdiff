@@ -1,8 +1,6 @@
 package norm
 
 import (
-	"encoding/binary"
-	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -563,36 +561,4 @@ func addisBase(in Inst) (uint64, bool) {
 		return 0, false
 	}
 	return uint64(hi << 16), true
-}
-
-// Disassemble decodes fn the way the normalizer expects: ppc64
-// mnemonics in Go spelling (ADDIS, not addis), so ops read the same
-// across architectures, and arm literal-pool words as WORD
-// pseudo-instructions rather than decoded garbage. Go's arm linker
-// emits no mapping symbols, so objfile cannot tell the pool apart on
-// its own.
-func Disassemble(bin *objfile.Binary, fn *objfile.Func) ([]Inst, error) {
-	insts, err := bin.Disassemble(fn)
-	if err != nil {
-		return nil, err
-	}
-	switch bin.Arch {
-	case "ppc64", "ppc64le":
-		for i := range insts {
-			if insts[i].Op != "" {
-				insts[i].Op, _, _ = strings.Cut(insts[i].Text, " ")
-			}
-		}
-	case "arm":
-		code := fn.Code()
-		pool := armPool(code)
-		for i := range insts {
-			off := int(insts[i].Addr - fn.Addr)
-			if pool[off] {
-				w := binary.LittleEndian.Uint32(code[off:])
-				insts[i] = Inst{Addr: insts[i].Addr, Len: 4, Op: "WORD", Text: fmt.Sprintf("WORD $%#x", w)}
-			}
-		}
-	}
-	return insts, nil
 }

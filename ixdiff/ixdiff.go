@@ -219,7 +219,7 @@ func (f *Func) StackSlots() (int, error) {
 
 // decode disassembles the function.
 func (f *Func) decode() ([]norm.Inst, error) {
-	return norm.Disassemble(f.bin.obj, f.obj)
+	return f.bin.obj.Disassemble(f.obj)
 }
 
 // ops extracts the mnemonics of insts, skipping BYTE pseudo-

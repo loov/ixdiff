@@ -253,7 +253,7 @@ func (d *Diff) listing(p Pair) ([]Line, error) {
 	if p.State == Removed {
 		fn, bin, op = p.Old, d.old, fndiff.OpDelete
 	}
-	insts, err := norm.Disassemble(bin.obj, fn.obj)
+	insts, err := bin.obj.Disassemble(fn.obj)
 	if err != nil {
 		return nil, fmt.Errorf("disassembling %s: %w", p.Name, err)
 	}
@@ -323,13 +323,13 @@ func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts norm.Option
 			var oldInsts, newInsts []norm.Inst
 			var err error
 			if p.Old != nil {
-				oldInsts, err = norm.Disassemble(oldObj, p.Old)
+				oldInsts, err = oldObj.Disassemble(p.Old)
 				if err != nil {
 					return fmt.Errorf("disassembling old %s: %w", p.Name, err)
 				}
 			}
 			if p.New != nil {
-				newInsts, err = norm.Disassemble(newObj, p.New)
+				newInsts, err = newObj.Disassemble(p.New)
 				if err != nil {
 					return fmt.Errorf("disassembling new %s: %w", p.Name, err)
 				}
@@ -380,11 +380,11 @@ func bodySimilar(old, new *Binary, opts norm.Options) func(oldF, newF *objfile.F
 			return false
 		}
 
-		oldInsts, err := norm.Disassemble(oldObj, oldF)
+		oldInsts, err := oldObj.Disassemble(oldF)
 		if err != nil {
 			return false
 		}
-		newInsts, err := norm.Disassemble(newObj, newF)
+		newInsts, err := newObj.Disassemble(newF)
 		if err != nil {
 			return false
 		}

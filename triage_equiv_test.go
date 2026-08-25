@@ -62,11 +62,11 @@ func TestWasm_PadShiftIsPureNoise(t *testing.T) {
 			continue
 		}
 		changed++
-		oldInsts, err := norm.Disassemble(old, p.Old)
+		oldInsts, err := old.Disassemble(p.Old)
 		if err != nil {
 			t.Fatalf("Decode old %s: %v", p.Name, err)
 		}
-		newInsts, err := norm.Disassemble(new, p.New)
+		newInsts, err := new.Disassemble(p.New)
 		if err != nil {
 			t.Fatalf("Decode new %s: %v", p.Name, err)
 		}
@@ -100,11 +100,11 @@ func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) int {
 		}
 		fast++
 
-		oldInsts, err := norm.Disassemble(old, p.Old)
+		oldInsts, err := old.Disassemble(p.Old)
 		if err != nil {
 			t.Fatalf("Decode old %s: %v", p.Name, err)
 		}
-		newInsts, err := norm.Disassemble(new, p.New)
+		newInsts, err := new.Disassemble(p.New)
 		if err != nil {
 			t.Fatalf("Decode new %s: %v", p.Name, err)
 		}

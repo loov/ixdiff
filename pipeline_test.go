@@ -217,7 +217,7 @@ func TestPipeline_BlocksSplitsOnRISCV(t *testing.T) {
 	}
 	defer bin.Close()
 	fn := bin.Func("main.main")
-	insts, err := norm.Disassemble(bin, fn)
+	insts, err := bin.Disassemble(fn)
 	if err != nil {
 		t.Fatalf("decode main.main: %v", err)
 	}

@@ -425,7 +425,7 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 			if fn == nil {
 				t.Fatal("main.main not found")
 			}
-			insts, err := norm.Disassemble(bin, fn)
+			insts, err := bin.Disassemble(fn)
 			if err != nil {
 				t.Fatalf("Decode: %v", err)
 			}
@@ -492,7 +492,7 @@ func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
 
 func normalized(t *testing.T, bin *objfile.Binary, fn *objfile.Func) []string {
 	t.Helper()
-	insts, err := norm.Disassemble(bin, fn)
+	insts, err := bin.Disassemble(fn)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
