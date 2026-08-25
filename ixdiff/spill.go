@@ -5,8 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/loov/ixdiff/internal/disasm"
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/ixdiff/internal/norm"
 )
 
 // pairSlots maps the arm64 mnemonics that move two registers per
@@ -51,12 +50,12 @@ var movOps = map[string]bool{"MOV": true, "MOVD": true, "MOVV": true}
 // (non-memory) operands, for the architectures whose compilers
 // materialize stack addresses into scratch registers. Empty for the
 // rest: their stack accesses are all direct displacements.
-var spName = map[objfile.Arch]string{
-	objfile.ArchAMD64:   "SP",
-	objfile.Arch386:     "SP",
-	objfile.ArchARM64:   "RSP",
-	objfile.ArchRISCV64: "X2",
-	objfile.ArchLoong64: "R3",
+var spName = map[string]string{
+	"amd64":   "SP",
+	"386":     "SP",
+	"arm64":   "RSP",
+	"riscv64": "X2",
+	"loong64": "R3",
 }
 
 // countSpills weighs the stack accesses of insts two ways.
@@ -89,14 +88,14 @@ var spName = map[objfile.Arch]string{
 // slots, and counting them would mostly add loop noise. Bulk-memory
 // operations (runtime.duffzero/duffcopy calls, REP MOVS) move stack
 // bytes with no per-site stack operand and are likewise invisible.
-func countSpills(arch objfile.Arch, insts []disasm.Inst) (spills, slots int) {
+func countSpills(arch string, insts []norm.Inst) (spills, slots int) {
 	// alias is the set of registers currently holding a stack address.
 	// ponytail: linear scan, no control flow — the compiler defines the
 	// scratch register right before its uses, so joins never matter.
 	alias := map[string]bool{}
 	sp := spName[arch]
 	for _, in := range insts {
-		if in.Op == "BYTE" {
+		if in.Op == "" {
 			continue
 		}
 		op, _, _ := strings.Cut(in.Op, ".")
@@ -115,7 +114,7 @@ func countSpills(arch objfile.Arch, insts []disasm.Inst) (spills, slots int) {
 
 		if !leaOps[op] {
 			for _, arg := range args {
-				if disasm.IsStackRef(arch, arg) || alias[memBase(arg)] {
+				if norm.IsStackRef(arch, arg) || alias[memBase(arg)] {
 					regs, touched := weight(op, args)
 					spills += regs
 					slots += touched
@@ -134,7 +133,7 @@ func countSpills(arch objfile.Arch, insts []disasm.Inst) (spills, slots int) {
 			alias[last(args)] = true
 		case movOps[op] && len(args) == 2 && args[0] == sp && args[1] != sp:
 			alias[args[1]] = true
-		case leaOps[op] && len(args) == 2 && disasm.IsStackRef(arch, args[0]):
+		case leaOps[op] && len(args) == 2 && norm.IsStackRef(arch, args[0]):
 			alias[args[1]] = true
 		case len(args) > 0:
 			// The destination is the last operand in Go syntax; any

@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/disasm/objfile"
 )
 
 // closureNum matches compiler-generated numbered suffixes whose

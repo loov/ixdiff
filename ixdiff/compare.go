@@ -7,9 +7,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/loov/ixdiff/internal/disasm"
+	"github.com/loov/disasm/objfile"
 	"github.com/loov/ixdiff/internal/fndiff"
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/ixdiff/internal/norm"
 )
 
 // State classifies how a function differs between two binaries.
@@ -113,7 +113,7 @@ type Options struct {
 // Diff is the result of comparing two binaries.
 type Diff struct {
 	old, new *Binary
-	norm     disasm.Options
+	norm     norm.Options
 	pairs    []Pair
 	// lines holds the eagerly computed edit scripts of changed pairs,
 	// keyed by pair name.
@@ -134,7 +134,7 @@ func Compare(old, new *Binary, opts *Options) (*Diff, error) {
 	if old.obj.Arch != new.obj.Arch {
 		return nil, fmt.Errorf("architecture mismatch: %v vs %v", old.obj.Arch, new.obj.Arch)
 	}
-	norm := disasm.Options{MaskSP: opts.MaskSP, Arch: old.obj.Arch}
+	norm := norm.Options{MaskSP: opts.MaskSP, Arch: old.obj.Arch}
 
 	fpairs := fndiff.Compare(old.obj, new.obj)
 	fpairs = fndiff.MatchRenames(fpairs, bodySimilar(old, new, norm))
@@ -253,19 +253,19 @@ func (d *Diff) listing(p Pair) ([]Line, error) {
 	if p.State == Removed {
 		fn, bin, op = p.Old, d.old, fndiff.OpDelete
 	}
-	insts, err := disasm.Decode(bin.obj.Arch, fn.Code(), fn.Addr, bin.symLookup())
+	insts, err := norm.Disassemble(bin.obj, fn.obj)
 	if err != nil {
 		return nil, fmt.Errorf("disassembling %s: %w", p.Name, err)
 	}
 	opts := d.norm
 	opts.IsAddr = bin.obj.Contains
 	opts.DataSym = bin.obj.DataSym
-	normalized := disasm.Normalize(fn.Name, insts, opts)
+	normalized := norm.Normalize(fn.Name, insts, opts)
 	edits := make([]fndiff.Edit, len(normalized))
 	for i, text := range normalized {
 		edits[i] = fndiff.Edit{Op: op, Text: text}
 	}
-	addrs := disasm.Addrs(insts)
+	addrs := norm.Addrs(insts)
 	if op == fndiff.OpInsert {
 		return toLines(fndiff.ResolveLines(edits, nil, addrs)), nil
 	}
@@ -304,8 +304,7 @@ type analysis struct {
 // concurrency. Changed pairs are additionally diffed; added and
 // removed functions contribute only their instruction counts. The
 // result keeps the input order.
-func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts disasm.Options) ([]*analysis, error) {
-	oldLookup, newLookup := old.symLookup(), new.symLookup()
+func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts norm.Options) ([]*analysis, error) {
 	oldObj, newObj := old.obj, new.obj
 
 	results := make([]*analysis, len(pairs))
@@ -314,23 +313,23 @@ func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts disasm.Opti
 	for i, p := range pairs {
 		g.Go(func() error {
 			if p.State == fndiff.StateChanged &&
-				disasm.RelocOnly(oldObj.Arch, p.Old.Code(), p.New.Code(),
-					p.Old.Addr, p.New.Addr, oldLookup, newLookup, oldObj.DataSym, newObj.DataSym) {
+				norm.RelocOnly(oldObj.Arch, p.Old.Code(), p.New.Code(),
+					p.Old.Addr, p.New.Addr, oldObj.Lookup, newObj.Lookup, oldObj.DataSym, newObj.DataSym) {
 				// Provably relocation-only: skip disassembly.
 				results[i] = &analysis{pair: p, noise: true}
 				return nil
 			}
 
-			var oldInsts, newInsts []disasm.Inst
+			var oldInsts, newInsts []norm.Inst
 			var err error
 			if p.Old != nil {
-				oldInsts, err = disasm.Decode(oldObj.Arch, p.Old.Code(), p.Old.Addr, oldLookup)
+				oldInsts, err = norm.Disassemble(oldObj, p.Old)
 				if err != nil {
 					return fmt.Errorf("disassembling old %s: %w", p.Name, err)
 				}
 			}
 			if p.New != nil {
-				newInsts, err = disasm.Decode(newObj.Arch, p.New.Code(), p.New.Addr, newLookup)
+				newInsts, err = norm.Disassemble(newObj, p.New)
 				if err != nil {
 					return fmt.Errorf("disassembling new %s: %w", p.Name, err)
 				}
@@ -350,12 +349,12 @@ func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts disasm.Opti
 				oldOpts.IsAddr, newOpts.IsAddr = oldObj.Contains, newObj.Contains
 				oldOpts.DataSym, newOpts.DataSym = oldObj.DataSym, newObj.DataSym
 				oldLines, newLines := fndiff.AlignLabels(
-					disasm.NormalizeLines(p.Old.Name, oldInsts, oldOpts),
-					disasm.NormalizeLines(p.New.Name, newInsts, newOpts))
+					norm.NormalizeLines(p.Old.Name, oldInsts, oldOpts),
+					norm.NormalizeLines(p.New.Name, newInsts, newOpts))
 				a.edits = fndiff.Diff(oldLines, newLines)
 				a.noise = slices.Equal(oldLines, newLines)
-				a.oldAddrs = disasm.Addrs(oldInsts)
-				a.newAddrs = disasm.Addrs(newInsts)
+				a.oldAddrs = norm.Addrs(oldInsts)
+				a.newAddrs = norm.Addrs(newInsts)
 			}
 			results[i] = a
 			return nil
@@ -370,8 +369,7 @@ func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts disasm.Opti
 // bodySimilar returns the rename-detection predicate: two functions
 // from the same package with sizes within 20% whose normalized bodies
 // are at least 90% identical lines.
-func bodySimilar(old, new *Binary, opts disasm.Options) func(oldF, newF *objfile.Func) bool {
-	oldLookup, newLookup := old.symLookup(), new.symLookup()
+func bodySimilar(old, new *Binary, opts norm.Options) func(oldF, newF *objfile.Func) bool {
 	oldObj, newObj := old.obj, new.obj
 	return func(oldF, newF *objfile.Func) bool {
 		small, large := oldF.Size, newF.Size
@@ -382,11 +380,11 @@ func bodySimilar(old, new *Binary, opts disasm.Options) func(oldF, newF *objfile
 			return false
 		}
 
-		oldInsts, err := disasm.Decode(oldObj.Arch, oldF.Code(), oldF.Addr, oldLookup)
+		oldInsts, err := norm.Disassemble(oldObj, oldF)
 		if err != nil {
 			return false
 		}
-		newInsts, err := disasm.Decode(newObj.Arch, newF.Code(), newF.Addr, newLookup)
+		newInsts, err := norm.Disassemble(newObj, newF)
 		if err != nil {
 			return false
 		}
@@ -396,8 +394,8 @@ func bodySimilar(old, new *Binary, opts disasm.Options) func(oldF, newF *objfile
 		// Each side normalizes under its own symbol name so
 		// self-referencing branches become labels on both sides and a
 		// pure rename compares equal.
-		oldLines := disasm.Normalize(oldF.Name, oldInsts, oldOpts)
-		newLines := disasm.Normalize(newF.Name, newInsts, newOpts)
+		oldLines := norm.Normalize(oldF.Name, oldInsts, oldOpts)
+		newLines := norm.Normalize(newF.Name, newInsts, newOpts)
 
 		equal := 0
 		for _, e := range fndiff.Diff(oldLines, newLines) {

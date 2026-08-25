@@ -3,8 +3,8 @@ package fndiff_test
 import (
 	"testing"
 
+	"github.com/loov/disasm/objfile"
 	"github.com/loov/ixdiff/internal/fndiff"
-	"github.com/loov/ixdiff/internal/objfile"
 	"github.com/loov/ixdiff/internal/testbin"
 )
 

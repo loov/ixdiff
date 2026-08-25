@@ -10,8 +10,8 @@ import (
 
 	"github.com/zeebo/clingy"
 
-	"github.com/loov/ixdiff/internal/disasm"
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/disasm/objfile"
+	"github.com/loov/ixdiff/internal/norm"
 	"github.com/loov/ixdiff/internal/testbin"
 )
 
@@ -216,12 +216,12 @@ func TestPipeline_BlocksSplitsOnRISCV(t *testing.T) {
 		t.Fatalf("open %s: %v", base, err)
 	}
 	defer bin.Close()
-	fn := bin.Funcs["main.main"]
-	insts, err := disasm.Decode(bin.Arch, fn.Code(), fn.Addr, disasm.Lookup(bin))
+	fn := bin.Func("main.main")
+	insts, err := norm.Disassemble(bin, fn)
 	if err != nil {
 		t.Fatalf("decode main.main: %v", err)
 	}
-	nl := disasm.NormalizeLines(fn.Name, insts, disasm.Options{})
+	nl := norm.NormalizeLines(fn.Name, insts, norm.Options{})
 	ends := blockEnds(nl, insts)
 	for i, in := range insts {
 		if in.Text == "RET" && !ends[i] {

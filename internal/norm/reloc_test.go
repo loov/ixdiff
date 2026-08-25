@@ -1,12 +1,11 @@
-package disasm_test
+package norm_test
 
 import (
 	"bytes"
 	"encoding/binary"
 	"testing"
 
-	"github.com/loov/ixdiff/internal/disasm"
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/ixdiff/internal/norm"
 )
 
 // words builds little-endian arm64 code from instruction words.
@@ -168,7 +167,7 @@ func TestRelocOnly_ARM64(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := disasm.RelocOnly(objfile.ArchARM64,
+			got := norm.RelocOnly("arm64",
 				words(tt.old...), words(tt.new...), 0x10000, 0x20000, oldSym, newSym, oldData, newData)
 			if got != tt.want {
 				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
@@ -328,7 +327,7 @@ func TestRelocOnly_ARM(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := disasm.RelocOnly(objfile.ArchARM,
+			got := norm.RelocOnly("arm",
 				words(tt.old...), words(tt.new...), 0x10000, 0x20000, oldSym, newSym, oldData, newData)
 			if got != tt.want {
 				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
@@ -498,7 +497,7 @@ func TestRelocOnly_RISCV64(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := disasm.RelocOnly(objfile.ArchRISCV64,
+			got := norm.RelocOnly("riscv64",
 				words(tt.old...), words(tt.new...), 0x10000, 0x20000, oldSym, newSym, oldData, newData)
 			if got != tt.want {
 				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
@@ -658,7 +657,7 @@ func TestRelocOnly_Loong64(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := disasm.RelocOnly(objfile.ArchLoong64,
+			got := norm.RelocOnly("loong64",
 				words(tt.old...), words(tt.new...), 0x10000, 0x20000, oldSym, newSym, oldData, newData)
 			if got != tt.want {
 				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
@@ -746,7 +745,7 @@ func TestRelocOnly_386(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := disasm.RelocOnly(objfile.Arch386, tt.old, tt.new,
+			got := norm.RelocOnly("386", tt.old, tt.new,
 				0x10000, 0x20000, oldSym, newSym, noData, noData)
 			if got != tt.want {
 				t.Errorf("RelocOnly = %v, want %v", got, tt.want)
@@ -881,7 +880,7 @@ func TestRelocOnly_AMD64(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := disasm.RelocOnly(objfile.ArchAMD64, tt.old, tt.new,
+			got := norm.RelocOnly("amd64", tt.old, tt.new,
 				0x10000, 0x20000, oldSym, newSym, oldData, newData)
 			if got != tt.want {
 				t.Errorf("RelocOnly = %v, want %v", got, tt.want)

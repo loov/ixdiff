@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/loov/ixdiff/internal/disasm"
+	"github.com/loov/ixdiff/internal/norm"
 )
 
 func mkBlock(addr uint64, lines ...string) block {
@@ -37,14 +37,14 @@ func TestSplitBlocks_CutsAtLeadersAndTransfers(t *testing.T) {
 // recognized by the rendered text, not the raw decoder Op: riscv64
 // returns decode as JALR but render as RET, and wasm ops are lowercase.
 func TestBlockEnds_UsesRenderedMnemonic(t *testing.T) {
-	nl := []disasm.Line{
+	nl := []norm.Line{
 		{Text: "ADD X10, X11", Target: -1},
 		{Text: "BEQ X10, X0, \x01", Target: 3}, // conditional with label target
 		{Text: "RET", Target: -1},              // riscv64 return, raw Op JALR
 		{Text: "i32.const 1", Target: -1},
 		{Text: "return", Target: -1}, // wasm return
 	}
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Op: "ADD", Text: "ADD X10, X11"},
 		{Op: "BEQ", Text: "BEQ X10, X0, 2(PC)"},
 		{Op: "JALR", Text: "RET"},

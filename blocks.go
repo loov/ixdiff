@@ -5,8 +5,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/loov/ixdiff/internal/disasm"
 	"github.com/loov/ixdiff/internal/fndiff"
+	"github.com/loov/ixdiff/internal/norm"
 	"github.com/loov/ixdiff/ixdiff"
 )
 
@@ -70,7 +70,7 @@ func splitBlocks(lines []string, addrs []uint64, leaders, ends map[int]bool) []b
 // blockEnds marks every instruction that terminates a basic block: an
 // intra-function branch (it has a label target), or an unconditional
 // transfer.
-func blockEnds(nl []disasm.Line, insts []disasm.Inst) map[int]bool {
+func blockEnds(nl []norm.Line, insts []norm.Inst) map[int]bool {
 	ends := map[int]bool{}
 	for i, l := range nl {
 		op, _, _ := strings.Cut(insts[i].Text, " ")
@@ -156,26 +156,26 @@ func (c *cmdDiff) writeFuncBlocks(w io.Writer, p ixdiff.Pair) error {
 	if p.RenamedFrom != "" {
 		oldName = p.RenamedFrom
 	}
-	oldF, newF := old.Funcs[oldName], new.Funcs[p.Name]
-	opts := disasm.Options{MaskSP: c.maskSP, Arch: old.Arch}
+	oldF, newF := old.Func(oldName), new.Func(p.Name)
+	opts := norm.Options{MaskSP: c.maskSP, Arch: old.Arch}
 
-	oldInsts, err := disasm.Decode(old.Arch, oldF.Code(), oldF.Addr, disasm.Lookup(old))
+	oldInsts, err := norm.Disassemble(old, oldF)
 	if err != nil {
 		return fmt.Errorf("disassembling old %s: %w", p.Name, err)
 	}
-	newInsts, err := disasm.Decode(new.Arch, newF.Code(), newF.Addr, disasm.Lookup(new))
+	newInsts, err := norm.Disassemble(new, newF)
 	if err != nil {
 		return fmt.Errorf("disassembling new %s: %w", p.Name, err)
 	}
 	oldOpts, newOpts := opts, opts
 	oldOpts.IsAddr, newOpts.IsAddr = old.Contains, new.Contains
 	oldOpts.DataSym, newOpts.DataSym = old.DataSym, new.DataSym
-	oldNL := disasm.NormalizeLines(oldF.Name, oldInsts, oldOpts)
-	newNL := disasm.NormalizeLines(newF.Name, newInsts, newOpts)
+	oldNL := norm.NormalizeLines(oldF.Name, oldInsts, oldOpts)
+	newNL := norm.NormalizeLines(newF.Name, newInsts, newOpts)
 	oldLines, newLines := fndiff.AlignLabels(oldNL, newNL)
 
-	oldBlocks := splitBlocks(oldLines, disasm.Addrs(oldInsts), targetSet(oldNL), blockEnds(oldNL, oldInsts))
-	newBlocks := splitBlocks(newLines, disasm.Addrs(newInsts), targetSet(newNL), blockEnds(newNL, newInsts))
+	oldBlocks := splitBlocks(oldLines, norm.Addrs(oldInsts), targetSet(oldNL), blockEnds(oldNL, oldInsts))
+	newBlocks := splitBlocks(newLines, norm.Addrs(newInsts), targetSet(newNL), blockEnds(newNL, newInsts))
 	moves, restOld, restNew := matchBlocks(oldBlocks, newBlocks)
 
 	writeDiffHeader(w, p)
@@ -198,7 +198,7 @@ func (c *cmdDiff) writeFuncBlocks(w io.Writer, p ixdiff.Pair) error {
 }
 
 // targetSet collects the branch-target instruction indices of lines.
-func targetSet(lines []disasm.Line) map[int]bool {
+func targetSet(lines []norm.Line) map[int]bool {
 	targets := map[int]bool{0: true}
 	for _, l := range lines {
 		if l.Target >= 0 {

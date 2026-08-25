@@ -22,12 +22,10 @@
 package ixdiff
 
 import (
-	"cmp"
-	"slices"
 	"sync"
 
-	"github.com/loov/ixdiff/internal/disasm"
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/disasm/objfile"
+	"github.com/loov/ixdiff/internal/norm"
 )
 
 // Binary is a loaded binary, backed by a read-only memory mapping of
@@ -41,7 +39,6 @@ type Binary struct {
 	once   sync.Once
 	funcs  []*Func
 	byName map[string]*Func
-	lookup disasm.SymLookup
 }
 
 // Open maps the binary at path and parses it. The file format is
@@ -63,14 +60,19 @@ func (b *Binary) Path() string { return b.path }
 
 // Arch returns the Go name of the binary's instruction set, such as
 // "amd64" or "arm64".
-func (b *Binary) Arch() string { return b.obj.Arch.String() }
+func (b *Binary) Arch() string { return b.obj.Arch }
 
-// init builds the function views and the symbol lookup once.
+// init builds the function views once.
 func (b *Binary) init() {
 	b.once.Do(func() {
 		b.byName = make(map[string]*Func, len(b.obj.Funcs))
 		b.funcs = make([]*Func, 0, len(b.obj.Funcs))
-		for name, fn := range b.obj.Funcs {
+		for i := range b.obj.Funcs {
+			fn := &b.obj.Funcs[i]
+			name := fn.Name
+			if _, dup := b.byName[name]; dup {
+				continue // ABI wrappers repeat names; keep the first
+			}
 			f := &Func{
 				Name:    name,
 				Package: pkgOf(name),
@@ -82,22 +84,7 @@ func (b *Binary) init() {
 			b.byName[name] = f
 			b.funcs = append(b.funcs, f)
 		}
-		// Ties broken by name so aliased symbols at the same address
-		// order deterministically.
-		slices.SortFunc(b.funcs, func(x, y *Func) int {
-			if x.Addr != y.Addr {
-				return cmp.Compare(x.Addr, y.Addr)
-			}
-			return cmp.Compare(x.Name, y.Name)
-		})
-		b.lookup = disasm.Lookup(b.obj)
 	})
-}
-
-// symLookup returns the memoized symbol lookup for decoding.
-func (b *Binary) symLookup() disasm.SymLookup {
-	b.init()
-	return b.lookup
 }
 
 // Funcs returns every function of the binary in address order. The
@@ -230,17 +217,17 @@ func (f *Func) StackSlots() (int, error) {
 	return slots, nil
 }
 
-// decode disassembles the function with the binary's memoized lookup.
-func (f *Func) decode() ([]disasm.Inst, error) {
-	return disasm.Decode(f.bin.obj.Arch, f.Code(), f.Addr, f.bin.symLookup())
+// decode disassembles the function.
+func (f *Func) decode() ([]norm.Inst, error) {
+	return norm.Disassemble(f.bin.obj, f.obj)
 }
 
 // ops extracts the mnemonics of insts, skipping BYTE pseudo-
 // instructions: padding is not code and would pollute the statistics.
-func ops(insts []disasm.Inst) []string {
+func ops(insts []norm.Inst) []string {
 	out := make([]string, 0, len(insts))
 	for _, in := range insts {
-		if in.Op != "BYTE" {
+		if in.Op != "" {
 			out = append(out, in.Op)
 		}
 	}
@@ -248,10 +235,10 @@ func ops(insts []disasm.Inst) []string {
 }
 
 // countInsts counts real instructions, excluding BYTE padding.
-func countInsts(insts []disasm.Inst) int {
+func countInsts(insts []norm.Inst) int {
 	n := 0
 	for _, in := range insts {
-		if in.Op != "BYTE" {
+		if in.Op != "" {
 			n++
 		}
 	}

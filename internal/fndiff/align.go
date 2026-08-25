@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/loov/ixdiff/internal/disasm"
+	"github.com/loov/ixdiff/internal/norm"
 )
 
 // AlignLabels renders both sides of a changed function with branch
@@ -16,9 +16,9 @@ import (
 // aligned target pairs identically (numbered in new-side order) and
 // falls back to fresh per-side numbers for targets that do not align —
 // those branches genuinely changed and should diff.
-func AlignLabels(old, new []disasm.Line) (oldLines, newLines []string) {
+func AlignLabels(old, new []norm.Line) (oldLines, newLines []string) {
 	masked := func(int) string { return "L?" }
-	align := Diff(disasm.Render(old, masked), disasm.Render(new, masked))
+	align := Diff(norm.Render(old, masked), norm.Render(new, masked))
 
 	// oldToNew maps aligned instruction indices via the equal lines.
 	oldToNew := make(map[int]int)
@@ -55,12 +55,12 @@ func AlignLabels(old, new []disasm.Line) (oldLines, newLines []string) {
 	label := func(number map[int]int) func(int) string {
 		return func(target int) string { return "L" + strconv.Itoa(number[target]) }
 	}
-	return disasm.Render(old, label(oldNumber)), disasm.Render(new, label(newNumber))
+	return norm.Render(old, label(oldNumber)), norm.Render(new, label(newNumber))
 }
 
 // sortedTargets returns the distinct branch targets of lines in
 // address order.
-func sortedTargets(lines []disasm.Line) []int {
+func sortedTargets(lines []norm.Line) []int {
 	seen := map[int]bool{}
 	var targets []int
 	for _, l := range lines {
@@ -75,7 +75,7 @@ func sortedTargets(lines []disasm.Line) []int {
 
 // targetNumbers numbers the distinct targets of lines starting at
 // base+1.
-func targetNumbers(lines []disasm.Line, base int) map[int]int {
+func targetNumbers(lines []norm.Line, base int) map[int]int {
 	number := make(map[int]int)
 	for i, t := range sortedTargets(lines) {
 		number[t] = base + i + 1

@@ -1,10 +1,8 @@
-package disasm
+package norm
 
 import (
 	"encoding/binary"
 	"strings"
-
-	"github.com/loov/ixdiff/internal/objfile"
 )
 
 // DataLookup resolves an address to the name, base address, and size
@@ -57,23 +55,23 @@ func dataMasked(name string, size uint64) bool {
 // Architectures without a fast path (s390x; ppc64, whose ADDIS/ADD
 // pairs would need tracking analogous to arm64 ADRP) always report
 // false and rely on full analysis; that costs speed, not correctness.
-func RelocOnly(arch objfile.Arch, oldCode, newCode []byte, oldAddr, newAddr uint64,
+func RelocOnly(arch string, oldCode, newCode []byte, oldAddr, newAddr uint64,
 	oldSym, newSym SymLookup, oldData, newData DataLookup) bool {
 	if len(oldCode) != len(newCode) {
 		return false
 	}
 	switch arch {
-	case objfile.ArchARM64:
+	case "arm64":
 		return relocOnlyARM64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
-	case objfile.ArchAMD64:
+	case "amd64":
 		return relocOnlyX86(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData, 64)
-	case objfile.Arch386:
+	case "386":
 		return relocOnlyX86(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData, 32)
-	case objfile.ArchRISCV64:
+	case "riscv64":
 		return relocOnlyRISCV64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
-	case objfile.ArchLoong64:
+	case "loong64":
 		return relocOnlyLoong64(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
-	case objfile.ArchARM:
+	case "arm":
 		return relocOnlyARM(oldCode, newCode, oldAddr, newAddr, oldSym, newSym, oldData, newData)
 	default:
 		// No fast path for s390x: its variable-length encoding has no

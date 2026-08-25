@@ -1,47 +1,31 @@
-package disasm
+package norm
 
 import (
+	"encoding/binary"
+	"fmt"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/disasm/objfile"
 )
 
-// Lookup returns a SymLookup over the functions of bin, for resolving
-// call targets to names during decoding. For wasm binaries the lookup
-// maps function indices rather than addresses, matching the call
-// immediates of wasm code.
-func Lookup(bin *objfile.Binary) SymLookup {
-	if bin.Arch == objfile.ArchWasm {
-		return func(index uint64) (string, uint64) {
-			if name, ok := bin.WasmName(index); ok {
-				return name, index
-			}
-			return "", 0
-		}
+// Inst is a decoded instruction; Op is "" for undecodable bytes.
+type Inst = objfile.Inst
+
+// SymLookup resolves a target address to the name and base address of
+// the symbol containing it, or ("", 0) when unknown. It matches the
+// signature of objfile.Binary.Lookup.
+type SymLookup func(addr uint64) (name string, base uint64)
+
+// Addrs returns the address of every instruction.
+func Addrs(insts []Inst) []uint64 {
+	out := make([]uint64, len(insts))
+	for i, in := range insts {
+		out[i] = in.Addr
 	}
-	funcs := make([]*objfile.Func, 0, len(bin.Funcs))
-	for _, fn := range bin.Funcs {
-		funcs = append(funcs, fn)
-	}
-	// Ties broken by name so aliased symbols (e.g. f and f.abi0 at
-	// the same address) resolve deterministically in both binaries.
-	sort.Slice(funcs, func(i, j int) bool {
-		if funcs[i].Addr != funcs[j].Addr {
-			return funcs[i].Addr < funcs[j].Addr
-		}
-		return funcs[i].Name < funcs[j].Name
-	})
-	return func(addr uint64) (string, uint64) {
-		i := sort.Search(len(funcs), func(i int) bool { return funcs[i].Addr > addr })
-		if i > 0 && addr < funcs[i-1].Addr+funcs[i-1].Size {
-			return funcs[i-1].Name, funcs[i-1].Addr
-		}
-		return "", 0
-	}
+	return out
 }
 
 // Line is one normalized instruction. When the instruction branches
@@ -204,7 +188,7 @@ type Options struct {
 	// Arch selects the architecture-specific stack-pointer register
 	// for MaskSP. ArchUnknown falls back to matching the SP, RSP, and
 	// X2 displacement forms.
-	Arch objfile.Arch
+	Arch string
 
 	// IsAddr reports whether a value is an address inside the binary.
 	// When set, hex immediates recognized as addresses are masked as
@@ -264,24 +248,24 @@ func spPattern(tail string) *regexp.Regexp {
 // stack-pointer register, so it is absent and MaskSP is a no-op.
 // ArchUnknown keeps the legacy SP|RSP|X2 pattern so callers that never
 // set Options.Arch behave as before.
-var spDisp = map[objfile.Arch]*regexp.Regexp{
-	objfile.ArchUnknown: spPattern(`\(SP\)|\(RSP\)|\(X2\)`),
-	objfile.ArchAMD64:   spPattern(`\(SP\)`),
-	objfile.Arch386:     spPattern(`\(SP\)`),
-	objfile.ArchARM64:   spPattern(`\(RSP\)`),
-	objfile.ArchRISCV64: spPattern(`\(X2\)`),
-	objfile.ArchPPC64:   spPattern(`\(R1\)`),
-	objfile.ArchPPC64LE: spPattern(`\(R1\)`),
-	objfile.ArchLoong64: spPattern(`\(R3\)`),
-	objfile.ArchARM:     spPattern(`\(R13\)`),
-	objfile.ArchS390X:   spPattern(`\(R15\)|\(R0\)\(R15\*1\)`),
+var spDisp = map[string]*regexp.Regexp{
+	"":        spPattern(`\(SP\)|\(RSP\)|\(X2\)`),
+	"amd64":   spPattern(`\(SP\)`),
+	"386":     spPattern(`\(SP\)`),
+	"arm64":   spPattern(`\(RSP\)`),
+	"riscv64": spPattern(`\(X2\)`),
+	"ppc64":   spPattern(`\(R1\)`),
+	"ppc64le": spPattern(`\(R1\)`),
+	"loong64": spPattern(`\(R3\)`),
+	"arm":     spPattern(`\(R13\)`),
+	"s390x":   spPattern(`\(R15\)|\(R0\)\(R15\*1\)`),
 }
 
 // IsStackRef reports whether a rendered operand is a stack-pointer
 // displacement on the given architecture, such as 0x10(SP) on amd64 or
 // -112(RSP) on arm64. Wasm has no stack-pointer register, so every
 // operand reports false.
-func IsStackRef(arch objfile.Arch, arg string) bool {
+func IsStackRef(arch string, arg string) bool {
 	re := spDisp[arch]
 	return re != nil && re.MatchString(arg)
 }
@@ -579,4 +563,36 @@ func addisBase(in Inst) (uint64, bool) {
 		return 0, false
 	}
 	return uint64(hi << 16), true
+}
+
+// Disassemble decodes fn the way the normalizer expects: ppc64
+// mnemonics in Go spelling (ADDIS, not addis), so ops read the same
+// across architectures, and arm literal-pool words as WORD
+// pseudo-instructions rather than decoded garbage. Go's arm linker
+// emits no mapping symbols, so objfile cannot tell the pool apart on
+// its own.
+func Disassemble(bin *objfile.Binary, fn *objfile.Func) ([]Inst, error) {
+	insts, err := bin.Disassemble(fn)
+	if err != nil {
+		return nil, err
+	}
+	switch bin.Arch {
+	case "ppc64", "ppc64le":
+		for i := range insts {
+			if insts[i].Op != "" {
+				insts[i].Op, _, _ = strings.Cut(insts[i].Text, " ")
+			}
+		}
+	case "arm":
+		code := fn.Code()
+		pool := armPool(code)
+		for i := range insts {
+			off := int(insts[i].Addr - fn.Addr)
+			if pool[off] {
+				w := binary.LittleEndian.Uint32(code[off:])
+				insts[i] = Inst{Addr: insts[i].Addr, Len: 4, Op: "WORD", Text: fmt.Sprintf("WORD $%#x", w)}
+			}
+		}
+	}
+	return insts, nil
 }

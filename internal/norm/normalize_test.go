@@ -1,4 +1,4 @@
-package disasm_test
+package norm_test
 
 import (
 	"strings"
@@ -6,13 +6,13 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/loov/ixdiff/internal/disasm"
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/disasm/objfile"
+	"github.com/loov/ixdiff/internal/norm"
 	"github.com/loov/ixdiff/internal/testbin"
 )
 
 func TestNormalize_RewritesUnstableOperands(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x1000, Len: 4, Op: "CMP", Text: "CMPQ SP, 0x10(R14)"},
 		{Addr: 0x1004, Len: 6, Op: "JBE", Text: "JBE 0x1020"},
 		{Addr: 0x100a, Len: 7, Op: "MOV", Text: "MOVQ 0xe592f(IP), CX"},
@@ -30,14 +30,14 @@ func TestNormalize_RewritesUnstableOperands(t *testing.T) {
 		"JMP L1",                     // self-reference -> entry label
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	got := norm.Normalize("main.f", insts, norm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestNormalize_ARM64Operands(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x2000, Len: 4, Op: "ADRP", Text: "ADRP 933888(PC), R27"},
 		{Addr: 0x2004, Len: 4, Op: "BLS", Text: "BLS 2(PC)"},
 		{Addr: 0x2008, Len: 4, Op: "MOVD", Text: "MOVD $42, R0"},
@@ -49,7 +49,7 @@ func TestNormalize_ARM64Operands(t *testing.T) {
 		"MOVD $42, R0",
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	got := norm.Normalize("main.f", insts, norm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
@@ -61,7 +61,7 @@ func TestNormalize_ARM64Operands(t *testing.T) {
 // materialization as a branch to whatever instruction the bogus target
 // hits (here 2*4 bytes ahead, the RET).
 func TestNormalize_ARM64ADRMasked(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x2000, Len: 4, Op: "ADR", Text: "ADR 2(PC), R2"},
 		{Addr: 0x2004, Len: 4, Op: "MOVD", Text: "MOVD $42, R0"},
 		{Addr: 0x2008, Len: 4, Op: "RET", Text: "RET"},
@@ -71,7 +71,7 @@ func TestNormalize_ARM64ADRMasked(t *testing.T) {
 		"MOVD $42, R0",
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	got := norm.Normalize("main.f", insts, norm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
@@ -83,7 +83,7 @@ func TestNormalize_ARM64ADRMasked(t *testing.T) {
 // by 4 regardless of Len. Scaling by Len would aim the JAL at 0x2006,
 // the middle of an instruction, and mask the branch as <addr>(PC).
 func TestNormalize_RISCV64CompressedBranch(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x2000, Len: 2, Op: "JAL", Text: "JAL X0, 3(PC)"},
 		{Addr: 0x2002, Len: 2, Op: "MOV", Text: "MOV X10, X11"},
 		{Addr: 0x2004, Len: 4, Op: "MOV", Text: "MOV $42, X10"},
@@ -97,7 +97,7 @@ func TestNormalize_RISCV64CompressedBranch(t *testing.T) {
 		"MOV $7, X11",
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	got := norm.Normalize("main.f", insts, norm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
@@ -108,7 +108,7 @@ func TestNormalize_RISCV64CompressedBranch(t *testing.T) {
 // the follow-up low 16 bits on the same register as <lo12>/$<lo>,
 // while unrelated immediates and displacements are kept.
 func TestNormalize_PPC64Operands(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x1000, Len: 4, Op: "ADDIS", Text: "ADDIS $0,$26,R5"},
 		{Addr: 0x1004, Len: 4, Op: "MOVD", Text: "MOVD -21896(R5),R5"},
 		{Addr: 0x1008, Len: 4, Op: "ADDIS", Text: "ADDIS $0,$13,R3"},
@@ -126,14 +126,14 @@ func TestNormalize_PPC64Operands(t *testing.T) {
 		"BLT L1",
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	got := norm.Normalize("main.f", insts, norm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestNormalize_RISCV64Operands(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x2000, Len: 4, Op: "AUIPC", Text: "AUIPC $228, X5"},
 		{Addr: 0x2004, Len: 4, Op: "MOV", Text: "MOV 16(X5), X10"},
 		{Addr: 0x2008, Len: 4, Op: "ADDI", Text: "ADDI $-192, X5, X7"},
@@ -153,14 +153,14 @@ func TestNormalize_RISCV64Operands(t *testing.T) {
 		"MOV $42, X10",         // plain immediate kept
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	got := norm.Normalize("main.f", insts, norm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestNormalize_Loong64Operands(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x2000, Len: 4, Op: "PCALAU12I", Text: "PCALAU12I $247, R30"},
 		{Addr: 0x2004, Len: 4, Op: "LD.D", Text: "MOVV -1464(R30), R6"},
 		{Addr: 0x2008, Len: 4, Op: "PCALAU12I", Text: "PCALAU12I $22, R4"},
@@ -178,14 +178,14 @@ func TestNormalize_Loong64Operands(t *testing.T) {
 		"ADDV $8, R8, R4", // ordinary add kept
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	got := norm.Normalize("main.f", insts, norm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestNormalize_ARMOperands(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x3000, Len: 4, Op: "LDR", Text: "MOVW 0x8(R15), R0"},
 		{Addr: 0x3004, Len: 4, Op: "B", Text: "B 0x3014"},
 		{Addr: 0x3008, Len: 4, Op: "BL", Text: "BL runtime.makeslice(SB)"},
@@ -202,7 +202,7 @@ func TestNormalize_ARMOperands(t *testing.T) {
 		"WORD $0x2a",               // constant pool word kept
 		"BX R14",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{IsAddr: isAddr})
+	got := norm.Normalize("main.f", insts, norm.Options{IsAddr: isAddr})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
@@ -215,7 +215,7 @@ func TestNormalize_ARMOperands(t *testing.T) {
 // constants and branches keep the shared x86 treatment. The operand
 // texts are real x86asm GoSyntax mode-32 renderings.
 func TestNormalize_386Operands(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x1000, Len: 5, Op: "MOV", Text: "MOVL $0x4a2c40, AX"},
 		{Addr: 0x1005, Len: 5, Op: "MOV", Text: "MOVL $0x1, DI"},
 		{Addr: 0x100a, Len: 5, Op: "MOV", Text: "MOVL 0x4a2c40, AX"},
@@ -234,7 +234,7 @@ func TestNormalize_386Operands(t *testing.T) {
 		"NOPL",
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{IsAddr: isAddr})
+	got := norm.Normalize("main.f", insts, norm.Options{IsAddr: isAddr})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
@@ -244,35 +244,35 @@ func TestNormalize_386Operands(t *testing.T) {
 // instruction that is not a branch target does not renumber labels:
 // numbering follows target order, not instruction index.
 func TestNormalize_LabelsStableUnderInsertion(t *testing.T) {
-	base := []disasm.Inst{
+	base := []norm.Inst{
 		{Addr: 0x1000, Len: 2, Op: "JBE", Text: "JBE 0x1008"},
 		{Addr: 0x1002, Len: 5, Op: "MOV", Text: "MOVL $0x1, DI"},
 		{Addr: 0x1007, Len: 1, Op: "NOP", Text: "NOPL"},
 		{Addr: 0x1008, Len: 1, Op: "RET", Text: "RET"},
 	}
-	inserted := []disasm.Inst{
+	inserted := []norm.Inst{
 		{Addr: 0x1000, Len: 2, Op: "JBE", Text: "JBE 0x100d"},
 		{Addr: 0x1002, Len: 5, Op: "MOV", Text: "MOVL $0x1, DI"},
 		{Addr: 0x1007, Len: 5, Op: "MOV", Text: "MOVL $0x2, SI"}, // new
 		{Addr: 0x100c, Len: 1, Op: "NOP", Text: "NOPL"},
 		{Addr: 0x100d, Len: 1, Op: "RET", Text: "RET"},
 	}
-	a := disasm.Normalize("main.f", base, disasm.Options{})
-	b := disasm.Normalize("main.f", inserted, disasm.Options{})
+	a := norm.Normalize("main.f", base, norm.Options{})
+	b := norm.Normalize("main.f", inserted, norm.Options{})
 	if a[0] != "JBE L1" || b[0] != "JBE L1" {
 		t.Errorf("branch labels differ despite unchanged structure: %q vs %q", a[0], b[0])
 	}
 }
 
 func TestNormalize_MasksAddressImmediates(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x1000, Len: 7, Op: "MOV", Text: "MOVQ $0x4a2c40, AX"},
 		{Addr: 0x1007, Len: 5, Op: "MOV", Text: "MOVL $0x1, DI"},
 		{Addr: 0x100c, Len: 5, Op: "MOV", Text: "MOVL $0x4a2c40, SI"},
 	}
 	isAddr := func(v uint64) bool { return v >= 0x400000 && v < 0x500000 }
 
-	got := disasm.Normalize("main.f", insts, disasm.Options{IsAddr: isAddr})
+	got := norm.Normalize("main.f", insts, norm.Options{IsAddr: isAddr})
 	want := []string{
 		"MOVQ $<addr>, AX", // rodata pointer masked
 		"MOVL $0x1, DI",    // small constant kept
@@ -282,7 +282,7 @@ func TestNormalize_MasksAddressImmediates(t *testing.T) {
 		t.Errorf("IsAddr mismatch (-want +got):\n%s", diff)
 	}
 
-	plain := disasm.Normalize("main.f", insts, disasm.Options{})
+	plain := norm.Normalize("main.f", insts, norm.Options{})
 	for i, in := range insts {
 		if plain[i] != in.Text {
 			t.Errorf("without IsAddr rewrote %q to %q", in.Text, plain[i])
@@ -291,7 +291,7 @@ func TestNormalize_MasksAddressImmediates(t *testing.T) {
 }
 
 func TestNormalize_S390XOperands(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x2000, Len: 6, Op: "MOVD", Text: "MOVD 100(PC), R1"}, // larl of far data
 		{Addr: 0x2006, Len: 4, Op: "BNE", Text: "BNE 2(PC)"},         // offset in 4-byte units
 		{Addr: 0x200a, Len: 4, Op: "MOVB", Text: "MOVB $1, R2"},
@@ -305,14 +305,14 @@ func TestNormalize_S390XOperands(t *testing.T) {
 		"BRC $7, L2",
 		"RET",
 	}
-	got := disasm.Normalize("main.f", insts, disasm.Options{})
+	got := norm.Normalize("main.f", insts, norm.Options{})
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Normalize mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestNormalize_MaskSP(t *testing.T) {
-	insts := []disasm.Inst{
+	insts := []norm.Inst{
 		{Addr: 0x1000, Len: 7, Op: "SUB", Text: "SUBQ $0x330, SP"},
 		{Addr: 0x1007, Len: 8, Op: "MOV", Text: "MOVQ R11, 0x390(SP)"},
 		{Addr: 0x100f, Len: 4, Op: "MOVD", Text: "MOVD.W R30, -112(RSP)"},
@@ -320,7 +320,7 @@ func TestNormalize_MaskSP(t *testing.T) {
 		{Addr: 0x1017, Len: 4, Op: "MOV", Text: "MOV X1, 16(X2)"},
 	}
 
-	masked := disasm.Normalize("main.f", insts, disasm.Options{MaskSP: true})
+	masked := norm.Normalize("main.f", insts, norm.Options{MaskSP: true})
 	want := []string{
 		"SUBQ $0x330, SP",       // frame-size immediate kept
 		"MOVQ R11, <sp>(SP)",    // amd64 hex displacement masked
@@ -332,7 +332,7 @@ func TestNormalize_MaskSP(t *testing.T) {
 		t.Errorf("MaskSP on mismatch (-want +got):\n%s", diff)
 	}
 
-	plain := disasm.Normalize("main.f", insts, disasm.Options{})
+	plain := norm.Normalize("main.f", insts, norm.Options{})
 	for i, in := range insts {
 		if plain[i] != in.Text {
 			t.Errorf("MaskSP off rewrote %q to %q", in.Text, plain[i])
@@ -346,46 +346,46 @@ func TestNormalize_MaskSP(t *testing.T) {
 // passes through.
 func TestNormalize_MaskSP_PerArch(t *testing.T) {
 	tests := []struct {
-		arch objfile.Arch
+		arch string
 		in   []string
 		want []string
 	}{
-		{objfile.ArchAMD64,
+		{"amd64",
 			[]string{"MOVQ R11, 0x390(SP)", "CMPQ SP, 0x10(R14)"},
 			[]string{"MOVQ R11, <sp>(SP)", "CMPQ SP, 0x10(R14)"}},
-		{objfile.Arch386,
+		{"386",
 			[]string{"MOVL DX, 0x20(SP)", "MOVL AX, 0(SP)", "CMPL SP, 0x8(CX)"},
 			[]string{"MOVL DX, <sp>(SP)", "MOVL AX, <sp>(SP)", "CMPL SP, 0x8(CX)"}},
-		{objfile.ArchARM64,
+		{"arm64",
 			[]string{"MOVD.W R30, -112(RSP)", "MOVD 48(RSP), R2", "MOVD 16(R28), R16"},
 			[]string{"MOVD.W R30, <sp>(RSP)", "MOVD <sp>(RSP), R2", "MOVD 16(R28), R16"}},
-		{objfile.ArchARM,
+		{"arm",
 			[]string{"MOVW.W R14, -0x50(R13)", "MOVW R2, 0x24(R13)", "MOVW 0x8(R10), R1"},
 			[]string{"MOVW.W R14, <sp>(R13)", "MOVW R2, <sp>(R13)", "MOVW 0x8(R10), R1"}},
-		{objfile.ArchRISCV64,
+		{"riscv64",
 			[]string{"MOV X1, -104(X2)", "MOV X1, (X2)", "MOV 16(X27), X6"},
 			[]string{"MOV X1, <sp>(X2)", "MOV X1, <sp>(X2)", "MOV 16(X27), X6"}},
-		{objfile.ArchPPC64,
+		{"ppc64",
 			[]string{"MOVDU R31,-128(R1)", "MOVD 72(R1),R5", "MOVD 16(R30),R22"},
 			[]string{"MOVDU R31, <sp>(R1)", "MOVD <sp>(R1), R5", "MOVD 16(R30), R22"}},
-		{objfile.ArchPPC64LE,
+		{"ppc64le",
 			[]string{"MOVD R0,80(R1)", "MOVD 16(R30),R22"},
 			[]string{"MOVD R0, <sp>(R1)", "MOVD 16(R30), R22"}},
-		{objfile.ArchLoong64,
+		{"loong64",
 			[]string{"MOVV R1, -104(R3)", "MOVV 48(R3), R6", "MOVV 16(R22), R20"},
 			[]string{"MOVV R1, <sp>(R3)", "MOVV <sp>(R3), R6", "MOVV 16(R22), R20"}},
-		{objfile.ArchS390X,
+		{"s390x",
 			[]string{"MOVD R14, -104(R15)", "MOVD -104(R0)(R15*1), R15", "MOVD 56(R0)(R15*1), R1", "MOVD 16(R13), R10"},
 			[]string{"MOVD R14, <sp>(R15)", "MOVD <sp>(R0)(R15*1), R15", "MOVD <sp>(R0)(R15*1), R1", "MOVD 16(R13), R10"}},
 	}
 	for _, tt := range tests {
-		t.Run(tt.arch.String(), func(t *testing.T) {
-			insts := make([]disasm.Inst, len(tt.in))
+		t.Run(tt.arch, func(t *testing.T) {
+			insts := make([]norm.Inst, len(tt.in))
 			for i, text := range tt.in {
 				op, _, _ := strings.Cut(text, " ")
-				insts[i] = disasm.Inst{Addr: 0x1000 + uint64(i*4), Len: 4, Op: op, Text: text}
+				insts[i] = norm.Inst{Addr: 0x1000 + uint64(i*4), Len: 4, Op: op, Text: text}
 			}
-			got := disasm.Normalize("main.f", insts, disasm.Options{MaskSP: true, Arch: tt.arch})
+			got := norm.Normalize("main.f", insts, norm.Options{MaskSP: true, Arch: tt.arch})
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("MaskSP mismatch (-want +got):\n%s", diff)
 			}
@@ -421,16 +421,16 @@ func TestNormalize_ResolvesDataSymbols(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Open: %v", err)
 			}
-			fn := bin.Funcs["main.main"]
+			fn := bin.Func("main.main")
 			if fn == nil {
 				t.Fatal("main.main not found")
 			}
-			insts, err := disasm.Decode(bin.Arch, fn.Code(), fn.Addr, disasm.Lookup(bin))
+			insts, err := norm.Disassemble(bin, fn)
 			if err != nil {
 				t.Fatalf("Decode: %v", err)
 			}
-			lines := disasm.Normalize(fn.Name, insts,
-				disasm.Options{IsAddr: bin.Contains, DataSym: bin.DataSym})
+			lines := norm.Normalize(fn.Name, insts,
+				norm.Options{IsAddr: bin.Contains, DataSym: bin.DataSym})
 			joined := strings.Join(lines, "\n")
 			if !strings.Contains(joined, tt.want) {
 				t.Errorf("expected %s data reference in main.main:\n%s", tt.want, joined)
@@ -473,7 +473,7 @@ func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
 			}
 
 			const name = "main.main"
-			a, b := binA.Funcs[name], binB.Funcs[name]
+			a, b := binA.Func(name), binB.Func(name)
 			if a == nil || b == nil {
 				t.Fatalf("%s not found in both binaries", name)
 			}
@@ -492,11 +492,11 @@ func TestNormalize_StableAcrossLayoutShifts(t *testing.T) {
 
 func normalized(t *testing.T, bin *objfile.Binary, fn *objfile.Func) []string {
 	t.Helper()
-	insts, err := disasm.Decode(bin.Arch, fn.Code(), fn.Addr, disasm.Lookup(bin))
+	insts, err := norm.Disassemble(bin, fn)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
 	// DataSym matters: report.go always sets it, so the stability
 	// property must hold with symbol resolution enabled.
-	return disasm.Normalize(fn.Name, insts, disasm.Options{IsAddr: bin.Contains, DataSym: bin.DataSym})
+	return norm.Normalize(fn.Name, insts, norm.Options{IsAddr: bin.Contains, DataSym: bin.DataSym})
 }

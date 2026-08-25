@@ -3,7 +3,7 @@ package fndiff
 import (
 	"testing"
 
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/disasm/objfile"
 )
 
 func TestCanonicalName_StripsRenumberedParts(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/loov/ixdiff/internal/disasm"
+	"github.com/loov/ixdiff/internal/norm"
 )
 
 func TestPkgOf_ExtractsPackagePaths(t *testing.T) {
@@ -30,8 +30,8 @@ func TestPkgOf_ExtractsPackagePaths(t *testing.T) {
 }
 
 func TestOps_ExcludesBytePadding(t *testing.T) {
-	insts := []disasm.Inst{
-		{Op: "MOV"}, {Op: "RET"}, {Op: "BYTE"}, {Op: "BYTE"},
+	insts := []norm.Inst{
+		{Op: "MOV"}, {Op: "RET"}, {Op: ""}, {Op: ""},
 	}
 	if got := ops(insts); len(got) != 2 {
 		t.Errorf("ops = %v, want BYTE excluded", got)

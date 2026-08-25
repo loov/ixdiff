@@ -19,7 +19,7 @@ jobs:
       - run: make check
 
   # A new Go release can rev the pclntab format (see the magic list in
-  # internal/objfile/gosym.go); testing against the latest release
+  # github.com/loov/disasm/objfile); testing against the latest release
   # turns that into a visible failure instead of silent degradation.
   latest-go:
     runs-on: ubuntu-latest

@@ -8,7 +8,7 @@ import (
 	"cmp"
 	"slices"
 
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/disasm/objfile"
 )
 
 // State classifies how a function differs between two binaries.
@@ -68,9 +68,17 @@ func (p *Pair) SizeDelta() int64 {
 // identical without any disassembly. The result is sorted by name.
 func Compare(old, new *objfile.Binary) []*Pair {
 	pairs := make([]*Pair, 0, len(new.Funcs))
-	for name, nfn := range new.Funcs {
+	seen := make(map[string]bool, len(new.Funcs))
+	for i := range new.Funcs {
+		nfn := &new.Funcs[i]
+		name := nfn.Name
+		// Names repeat for ABI wrappers; keep the first like Func does.
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
 		p := &Pair{Name: name, New: nfn}
-		if ofn, ok := old.Funcs[name]; ok {
+		if ofn := old.Func(name); ofn != nil {
 			p.Old = ofn
 			if bytes.Equal(ofn.Code(), nfn.Code()) {
 				p.State = StateIdentical
@@ -82,9 +90,11 @@ func Compare(old, new *objfile.Binary) []*Pair {
 		}
 		pairs = append(pairs, p)
 	}
-	for name, ofn := range old.Funcs {
-		if _, ok := new.Funcs[name]; !ok {
-			pairs = append(pairs, &Pair{Name: name, State: StateRemoved, Old: ofn})
+	for i := range old.Funcs {
+		ofn := &old.Funcs[i]
+		if new.Func(ofn.Name) == nil && !seen[ofn.Name] {
+			seen[ofn.Name] = true
+			pairs = append(pairs, &Pair{Name: ofn.Name, State: StateRemoved, Old: ofn})
 		}
 	}
 	slices.SortFunc(pairs, func(a, b *Pair) int {

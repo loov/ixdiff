@@ -1,4 +1,4 @@
-package disasm
+package norm
 
 import (
 	"bytes"

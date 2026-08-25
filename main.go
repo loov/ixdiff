@@ -26,7 +26,7 @@ import (
 
 	"github.com/zeebo/clingy"
 
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/disasm/objfile"
 	"github.com/loov/ixdiff/ixdiff"
 )
 

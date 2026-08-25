@@ -4,9 +4,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/loov/ixdiff/internal/disasm"
+	"github.com/loov/disasm/objfile"
 	"github.com/loov/ixdiff/internal/fndiff"
-	"github.com/loov/ixdiff/internal/objfile"
+	"github.com/loov/ixdiff/internal/norm"
 	"github.com/loov/ixdiff/internal/testbin"
 )
 
@@ -18,7 +18,7 @@ import (
 // masking bug.
 func TestRelocOnly_NeverContradictsFullAnalysis(t *testing.T) {
 	// Only arches with a RelocOnly fast path (see the switch in
-	// internal/disasm/reloc.go). s390x, ppc64, and ppc64le have none,
+	// internal/norm/reloc.go). s390x, ppc64, and ppc64le have none,
 	// so running them here would assert nothing.
 	for _, arch := range []string{"amd64", "arm64", "arm", "riscv64", "loong64", "386"} {
 		for _, variant := range []testbin.Config{
@@ -56,24 +56,23 @@ func TestWasm_PadShiftIsPureNoise(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open pad: %v", err)
 	}
-	oldLookup, newLookup := disasm.Lookup(old), disasm.Lookup(new)
 	changed, noisy := 0, 0
 	for _, p := range fndiff.Compare(old, new) {
 		if p.State != fndiff.StateChanged {
 			continue
 		}
 		changed++
-		oldInsts, err := disasm.Decode(old.Arch, p.Old.Code(), p.Old.Addr, oldLookup)
+		oldInsts, err := norm.Disassemble(old, p.Old)
 		if err != nil {
 			t.Fatalf("Decode old %s: %v", p.Name, err)
 		}
-		newInsts, err := disasm.Decode(new.Arch, p.New.Code(), p.New.Addr, newLookup)
+		newInsts, err := norm.Disassemble(new, p.New)
 		if err != nil {
 			t.Fatalf("Decode new %s: %v", p.Name, err)
 		}
 		oldLines, newLines := fndiff.AlignLabels(
-			disasm.NormalizeLines(p.Old.Name, oldInsts, disasm.Options{IsAddr: old.Contains}),
-			disasm.NormalizeLines(p.New.Name, newInsts, disasm.Options{IsAddr: new.Contains}))
+			norm.NormalizeLines(p.Old.Name, oldInsts, norm.Options{IsAddr: old.Contains}),
+			norm.NormalizeLines(p.New.Name, newInsts, norm.Options{IsAddr: new.Contains}))
 		if slices.Equal(oldLines, newLines) {
 			noisy++
 			continue
@@ -90,29 +89,28 @@ func TestWasm_PadShiftIsPureNoise(t *testing.T) {
 // of two binaries and returns how often the fast path fired.
 func checkTriageEquivalence(t *testing.T, old, new *objfile.Binary) int {
 	t.Helper()
-	oldLookup, newLookup := disasm.Lookup(old), disasm.Lookup(new)
 	fast, contradictions := 0, 0
 	for _, p := range fndiff.Compare(old, new) {
 		if p.State != fndiff.StateChanged {
 			continue
 		}
-		if !disasm.RelocOnly(old.Arch, p.Old.Code(), p.New.Code(),
-			p.Old.Addr, p.New.Addr, oldLookup, newLookup, old.DataSym, new.DataSym) {
+		if !norm.RelocOnly(old.Arch, p.Old.Code(), p.New.Code(),
+			p.Old.Addr, p.New.Addr, old.Lookup, new.Lookup, old.DataSym, new.DataSym) {
 			continue
 		}
 		fast++
 
-		oldInsts, err := disasm.Decode(old.Arch, p.Old.Code(), p.Old.Addr, oldLookup)
+		oldInsts, err := norm.Disassemble(old, p.Old)
 		if err != nil {
 			t.Fatalf("Decode old %s: %v", p.Name, err)
 		}
-		newInsts, err := disasm.Decode(new.Arch, p.New.Code(), p.New.Addr, newLookup)
+		newInsts, err := norm.Disassemble(new, p.New)
 		if err != nil {
 			t.Fatalf("Decode new %s: %v", p.Name, err)
 		}
 		oldLines, newLines := fndiff.AlignLabels(
-			disasm.NormalizeLines(p.Old.Name, oldInsts, disasm.Options{IsAddr: old.Contains, DataSym: old.DataSym}),
-			disasm.NormalizeLines(p.New.Name, newInsts, disasm.Options{IsAddr: new.Contains, DataSym: new.DataSym}))
+			norm.NormalizeLines(p.Old.Name, oldInsts, norm.Options{IsAddr: old.Contains, DataSym: old.DataSym}),
+			norm.NormalizeLines(p.New.Name, newInsts, norm.Options{IsAddr: new.Contains, DataSym: new.DataSym}))
 		if !slices.Equal(oldLines, newLines) {
 			contradictions++
 			reportLineDiff(t, p.Name+": fast path claims noise, full path disagrees", oldLines, newLines)
