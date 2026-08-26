@@ -396,9 +396,31 @@ func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts norm.Option
 
 // bodySimilar returns the rename-detection predicate: two functions
 // from the same package with sizes within 20% whose normalized bodies
-// are at least 90% identical lines.
+// are at least 90% identical lines. The predicate is called for every
+// added×removed candidate, so normalized bodies are memoized and the
+// edit script is only computed once cheap bounds allow a match. It is
+// not safe for concurrent use.
 func bodySimilar(old, new *Binary, opts norm.Options) func(oldF, newF *objfile.Func) bool {
-	oldObj, newObj := old.obj, new.obj
+	// Each side normalizes under its own symbol name so
+	// self-referencing branches become labels on both sides and a
+	// pure rename compares equal.
+	normalized := func(bin *Binary) func(*objfile.Func) []string {
+		memo := map[*objfile.Func][]string{}
+		opts := opts
+		opts.IsAddr, opts.DataSym = bin.obj.Contains, bin.obj.DataSym
+		return func(f *objfile.Func) []string {
+			lines, ok := memo[f]
+			if !ok {
+				if insts, err := bin.obj.Disassemble(f); err == nil {
+					lines = norm.Normalize(f.Name, insts, opts)
+				}
+				memo[f] = lines
+			}
+			return lines
+		}
+	}
+	oldLines, newLines := normalized(old), normalized(new)
+
 	return func(oldF, newF *objfile.Func) bool {
 		small, large := oldF.Size, newF.Size
 		if small > large {
@@ -407,30 +429,38 @@ func bodySimilar(old, new *Binary, opts norm.Options) func(oldF, newF *objfile.F
 		if small*5 < large*4 || pkgOf(oldF.Name) != pkgOf(newF.Name) {
 			return false
 		}
-
-		oldInsts, err := oldObj.Disassemble(oldF)
-		if err != nil {
+		a, b := oldLines(oldF), newLines(newF)
+		if a == nil || b == nil {
 			return false
 		}
-		newInsts, err := newObj.Disassemble(newF)
-		if err != nil {
+		need := max(len(a), len(b)) * 9
+		// Common lines are at most the shorter side, and at most the
+		// multiset intersection; both bound the edit script's matches.
+		if min(len(a), len(b))*10 < need || commonLines(a, b)*10 < need {
 			return false
 		}
-		oldOpts, newOpts := opts, opts
-		oldOpts.IsAddr, newOpts.IsAddr = oldObj.Contains, newObj.Contains
-		oldOpts.DataSym, newOpts.DataSym = oldObj.DataSym, newObj.DataSym
-		// Each side normalizes under its own symbol name so
-		// self-referencing branches become labels on both sides and a
-		// pure rename compares equal.
-		oldLines := norm.Normalize(oldF.Name, oldInsts, oldOpts)
-		newLines := norm.Normalize(newF.Name, newInsts, newOpts)
-
 		equal := 0
-		for _, e := range fndiff.Diff(oldLines, newLines) {
+		for _, e := range fndiff.Diff(a, b) {
 			if e.Op == fndiff.OpEqual {
 				equal++
 			}
 		}
-		return equal*10 >= max(len(oldLines), len(newLines))*9
+		return equal*10 >= need
 	}
+}
+
+// commonLines counts the lines of a and b in common, as a multiset.
+func commonLines(a, b []string) int {
+	counts := make(map[string]int, len(a))
+	for _, l := range a {
+		counts[l]++
+	}
+	common := 0
+	for _, l := range b {
+		if counts[l] > 0 {
+			counts[l]--
+			common++
+		}
+	}
+	return common
 }
