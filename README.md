@@ -96,6 +96,7 @@ Other flags:
 | `--json` | machine-readable output |
 | `--color auto\|always\|never` | diff coloring (auto respects NO_COLOR) |
 | `--version` | print the module version and VCS revision |
+| `--cpuprofile f`, `--memprofile f` | write pprof profiles of the run (shown under `-h --advanced`) |
 
 With a single binary, `ixdiff app` prints its stats instead: function
 count, text size, instruction counts by opcode, and the largest packages

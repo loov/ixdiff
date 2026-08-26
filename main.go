@@ -21,7 +21,9 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"runtime/debug"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"strings"
@@ -88,6 +90,8 @@ type cmdDiff struct {
 	all      bool
 	version  bool
 	color    string
+	cpuProf  string
+	memProf  string
 	pal      palette
 
 	oldPath string
@@ -134,6 +138,8 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 	c.color = params.Flag("color", "colorize diffs: auto, always, or never", "auto").(string)
 	c.version = params.Flag("version", "print the module version and VCS revision", false,
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
+	c.cpuProf = params.Flag("cpuprofile", "write a CPU profile to this file", "", clingy.Advanced).(string)
+	c.memProf = params.Flag("memprofile", "write a heap profile to this file at exit", "", clingy.Advanced).(string)
 
 	c.oldPath = params.Arg("old", "path to the baseline binary").(string)
 	if p := params.Arg("new", "path to the changed binary; omitted: report on old alone", clingy.Optional).(*string); p != nil {
@@ -167,6 +173,24 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	var err error
 	if c.pal, err = resolvePalette(c.color); err != nil {
 		return err
+	}
+	if c.cpuProf != "" {
+		f, err := os.Create(c.cpuProf)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			return err
+		}
+		defer pprof.StopCPUProfile()
+	}
+	if c.memProf != "" {
+		defer func() {
+			if err := writeHeapProfile(c.memProf); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+		}()
 	}
 
 	old, err := ixdiff.Open(c.oldPath)
@@ -224,6 +248,19 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		return c.writeAll(stdout, d, pairs)
 	}
 	return nil
+}
+
+// writeHeapProfile writes the heap profile to path after a collection,
+// so in-use figures reflect what the run retained; the allocation
+// totals are unaffected.
+func writeHeapProfile(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	runtime.GC()
+	return pprof.Lookup("allocs").WriteTo(f, 0)
 }
 
 // writeAll appends a diff section for every function in the ranking
