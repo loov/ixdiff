@@ -351,10 +351,16 @@ func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts norm.Option
 				oldLines, newLines := fndiff.AlignLabels(
 					norm.NormalizeLines(p.Old.Name, oldInsts, oldOpts),
 					norm.NormalizeLines(p.New.Name, newInsts, newOpts))
-				a.edits = fndiff.Diff(oldLines, newLines)
+				// Relocation-only pairs need no edit script, and most
+				// pairs of a large binary are that: keeping an edit per
+				// instruction for all of them until the loop ends would
+				// dominate the peak memory of the run.
 				a.noise = slices.Equal(oldLines, newLines)
-				a.oldAddrs = norm.Addrs(oldInsts)
-				a.newAddrs = norm.Addrs(newInsts)
+				if !a.noise {
+					a.edits = fndiff.Diff(oldLines, newLines)
+					a.oldAddrs = norm.Addrs(oldInsts)
+					a.newAddrs = norm.Addrs(newInsts)
+				}
 			}
 			results[i] = a
 			return nil
