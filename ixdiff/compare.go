@@ -1,11 +1,13 @@
 package ixdiff
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"slices"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/loov/disasm/objfile"
 	"github.com/loov/ixdiff/internal/fndiff"
@@ -300,18 +302,38 @@ type analysis struct {
 	noise bool
 }
 
+// analyzeBudget bounds the code bytes being disassembled at once.
+// Decoding is transient but far larger than the code (wasm expands
+// about a thousandfold), so concurrency is limited by bytes in flight
+// rather than by function count, or a few huge functions decoded
+// together set the peak memory of the whole run.
+const analyzeBudget = 512 << 10
+
 // analyze disassembles every non-identical pair, limited to limit-way
-// concurrency. Changed pairs are additionally diffed; added and
-// removed functions contribute only their instruction counts. The
-// result keeps the input order.
+// concurrency and analyzeBudget bytes in flight. Changed pairs are
+// additionally diffed; added and removed functions contribute only
+// their instruction counts. The result keeps the input order.
 func analyze(pairs []*fndiff.Pair, old, new *Binary, limit int, opts norm.Options) ([]*analysis, error) {
 	oldObj, newObj := old.obj, new.obj
 
 	results := make([]*analysis, len(pairs))
 	var g errgroup.Group
 	g.SetLimit(limit)
+	inflight := semaphore.NewWeighted(analyzeBudget)
 	for i, p := range pairs {
+		var size uint64
+		if p.Old != nil {
+			size += p.Old.Size
+		}
+		if p.New != nil {
+			size += p.New.Size
+		}
+		weight := int64(min(size, analyzeBudget))
 		g.Go(func() error {
+			if err := inflight.Acquire(context.Background(), weight); err != nil {
+				return err
+			}
+			defer inflight.Release(weight)
 			if p.State == fndiff.StateChanged &&
 				norm.RelocOnly(oldObj.Arch, p.Old.Code(), p.New.Code(),
 					p.Old.Addr, p.New.Addr, oldObj.Lookup, newObj.Lookup, oldObj.DataSym, newObj.DataSym) {
