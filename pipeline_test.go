@@ -444,3 +444,25 @@ func TestPipeline_TopAndSortFlags(t *testing.T) {
 		t.Errorf("ranking table has %d rows, want at most 3:\n%s", rows, out)
 	}
 }
+
+// TestPipeline_SingleBinary checks that one argument yields stats and
+// --fn yields a plain disassembly.
+func TestPipeline_SingleBinary(t *testing.T) {
+	bin := testbin.Build(t, testbin.Config{GOOS: "linux", GOARCH: "amd64"})
+
+	out := run(t, bin)
+	for _, want := range []string{"arch: amd64", "functions: ", "total text size:", "instructions by opcode:", "packages by size:", "top "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stats missing %q:\n%s", want, out)
+		}
+	}
+
+	out = run(t, "--fn", "main.main", bin)
+	if !strings.HasPrefix(out, "main.main (") || !strings.Contains(out, "CALL") {
+		t.Errorf("unexpected listing:\n%s", out)
+	}
+
+	if err := runErr(t, "--fn", "no.such", bin); err == nil {
+		t.Error("expected error for unknown function")
+	}
+}

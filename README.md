@@ -97,6 +97,11 @@ Other flags:
 | `--color auto\|always\|never` | diff coloring (auto respects NO_COLOR) |
 | `--version` | print the module version and VCS revision |
 
+With a single binary, `ixdiff app` prints its stats instead: function
+count, text size, instruction counts by opcode, and the largest packages
+and functions. `ixdiff --fn main.main app` prints the disassembly of one
+function.
+
 ## How it works
 
 1. Function ranges come from symbol tables plus the Go pclntab; pairs

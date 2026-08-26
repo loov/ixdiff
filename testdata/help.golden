@@ -1,9 +1,9 @@
 Usage:
-    ixdiff [flags] <old> <new>
+    ixdiff [flags] <old> [new]
 
 Arguments:
     old    path to the baseline binary
-    new    path to the changed binary
+    new    path to the changed binary; omitted: report on old alone
 
 Flags:
         --fn string        diff the function with this name or substring (repeatable) (repeated)

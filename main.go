@@ -7,6 +7,8 @@
 // Usage:
 //
 //	ixdiff <old> <new>                     summary and top-N tables
+//	ixdiff <binary>                        stats of a single binary
+//	ixdiff --fn main.main <binary>         disassembly of one function
 //	ixdiff --fn runtime.mapaccess1 a b     assembly diff of one function
 //	ixdiff --top 100 --sort insts a b      rank by instruction-count delta
 package main
@@ -32,7 +34,7 @@ import (
 
 func main() {
 	// The flag is also declared in Setup so it appears in --help, but
-	// clingy requires the two binary arguments, so a bare --version is
+	// clingy requires the binary argument, so a bare --version is
 	// answered before it runs.
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		fmt.Println(version())
@@ -134,7 +136,9 @@ func (c *cmdDiff) Setup(params clingy.Parameters) {
 		clingy.Transform(strconv.ParseBool), clingy.Boolean).(bool)
 
 	c.oldPath = params.Arg("old", "path to the baseline binary").(string)
-	c.newPath = params.Arg("new", "path to the changed binary").(string)
+	if p := params.Arg("new", "path to the changed binary; omitted: report on old alone", clingy.Optional).(*string); p != nil {
+		c.newPath = *p
+	}
 }
 
 // Execute runs the comparison and writes the report to stdout.
@@ -170,6 +174,13 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		return fmt.Errorf("opening old binary: %w", err)
 	}
 	defer old.Close()
+	stdout := clingy.Stdout(ctx)
+	if c.newPath == "" {
+		if len(c.fns) > 0 {
+			return writeFuncListings(stdout, old, c.fns)
+		}
+		return writeStats(stdout, old, c.top)
+	}
 	new, err := ixdiff.Open(c.newPath)
 	if err != nil {
 		return fmt.Errorf("opening new binary: %w", err)
@@ -195,7 +206,6 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 	}
 
 	pairs := d.Pairs()
-	stdout := clingy.Stdout(ctx)
 
 	if len(c.fns) > 0 {
 		return c.executeFuncs(stdout, d, pairs)
