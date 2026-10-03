@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"regexp"
 	"runtime"
 	"runtime/debug"
@@ -43,13 +42,13 @@ func main() {
 		return
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
-
+	// SIGINT keeps its default handling: the comparison does not
+	// observe a context, so trapping the signal would only make Ctrl-C
+	// ignored until the run finishes.
 	ok, err := clingy.Environment{
 		Name: "ixdiff",
 		Root: new(cmdDiff),
-	}.Run(ctx, nil)
+	}.Run(context.Background(), nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
