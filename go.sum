@@ -12,7 +12,7 @@ github.com/zeebo/clingy v0.0.0-20260908180858-32a9e61e718e h1:PsLYYMKHqJgYbIkFsp
 github.com/zeebo/clingy v0.0.0-20260908180858-32a9e61e718e/go.mod h1:UYtPwAnfxW957MVe+h9FNm9JNWBh9eLjy4O8n/WOmZ0=
 github.com/zeebo/errs/v2 v2.0.5 h1:edtyFoQq9OBBsNPcu0b0wHtRvA8haukAHrGyOfWQGNI=
 github.com/zeebo/errs/v2 v2.0.5/go.mod h1:OKmvVZt4UqpyJrYFykDKm168ZquJ55pbbIVUICNmLN0=
-golang.org/x/arch v0.31.0 h1:22MlEb14/O/EPCYHFxsDdv5TuLD5dMjT5e2QeJw4ULk=
-golang.org/x/arch v0.31.0/go.mod h1:KcJSod3cqT2dKcjBxqTyGfbumNikqU9p5tHJinPJnuY=
+golang.org/x/arch v0.31.1-0.20260922213335-ab53fe6c43b6 h1:hVlIbIBR5er4f8JgYMQl3x6fARED1/L2lgEMVwHTlNE=
+golang.org/x/arch v0.31.1-0.20260922213335-ab53fe6c43b6/go.mod h1:KcJSod3cqT2dKcjBxqTyGfbumNikqU9p5tHJinPJnuY=
 golang.org/x/sync v0.23.0 h1:KameEIfc1IkluZyXWLn39Wd4tURc6GbCiISGiZm2bQk=
 golang.org/x/sync v0.23.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=

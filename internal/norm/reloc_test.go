@@ -809,6 +809,7 @@ func TestRelocOnly_AMD64(t *testing.T) {
 		return []byte{0x48, 0x8b, 0x05, byte(disp), byte(disp >> 8), byte(disp >> 16), byte(disp >> 24)}
 	}
 	ret := []byte{0xc3}
+	mulxq := []byte{0xc4, 0x62, 0xa3, 0xf6, 0xd2} // MULXQ DX, R11, R10
 	vzeroupper := []byte{0xc5, 0xf8, 0x77}
 	cat := func(bs ...[]byte) []byte { return bytes.Join(bs, nil) }
 
@@ -888,6 +889,15 @@ func TestRelocOnly_AMD64(t *testing.T) {
 			old:  cat(vzeroupper, call(0xff8), ret),
 			new:  cat(vzeroupper, call(0xff8), ret),
 			want: false,
+		},
+		{
+			// The call ends at offset 10. old: 0x1000a+0xff6 = 0x11000
+			// (callee); new: 0x2000a+0x1ff6 = 0x22000. MULXQ is VEX
+			// encoded and must decode for the walk to reach the call.
+			name: "same callee after mulxq at shifted address",
+			old:  cat(mulxq, call(0xff6), ret),
+			new:  cat(mulxq, call(0x1ff6), ret),
+			want: true,
 		},
 		{
 			// 0x06 does not decode in 64-bit mode; the equal bytes

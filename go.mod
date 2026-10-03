@@ -6,7 +6,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/loov/disasm v0.1.3
 	github.com/zeebo/clingy v0.0.0-20260908180858-32a9e61e718e
-	golang.org/x/arch v0.31.0
+	golang.org/x/arch v0.31.1-0.20260922213335-ab53fe6c43b6
 	golang.org/x/sync v0.23.0
 )
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -118,6 +119,32 @@ func TestFunc_StatsMatchesSeparateMethods(t *testing.T) {
 		if diff := cmp.Diff(want, st); diff != "" {
 			t.Fatalf("Stats(%s) mismatch (-want +got):\n%s", f.Name, diff)
 		}
+	}
+}
+
+// TestFunc_TextDecodesVEXMULXQ lists a function containing the
+// VEX-encoded MULXQ that bits.Mul64 can compile to at GOAMD64=v3.
+// Undecoded, it surfaces as BYTE pseudo-instructions followed by
+// garbage decoded from mid-instruction offsets.
+func TestFunc_TextDecodesVEXMULXQ(t *testing.T) {
+	bin := open(t, testbin.Config{GOOS: "linux", GOARCH: "amd64", Tags: "mulx"})
+	f, ok := bin.Func("main.mul64")
+	if !ok {
+		t.Fatal("Func(main.mul64) not found")
+	}
+	insts, err := f.Text()
+	if err != nil {
+		t.Fatalf("Text: %v", err)
+	}
+	var mulx bool
+	for _, in := range insts {
+		if strings.HasPrefix(in.Text, "BYTE") {
+			t.Errorf("undecoded bytes at %#x: %s", in.Addr, in.Text)
+		}
+		mulx = mulx || strings.HasPrefix(in.Text, "MULXQ ")
+	}
+	if !mulx {
+		t.Errorf("main.mul64 has no MULXQ; listing: %+v", insts)
 	}
 }
 

@@ -21,7 +21,7 @@ type Config struct {
 	GOARCH  string // target architecture; host architecture when empty
 	GCFlags string // passed as -gcflags
 	LDFlags string // passed as -ldflags
-	Tags    string // passed as -tags; "pad" adds a layout-shifting function
+	Tags    string // passed as -tags; "pad" adds a layout-shifting function, "mulx" an amd64 MULXQ
 }
 
 // Build compiles the fixture program with cfg and returns the path to
