@@ -110,24 +110,38 @@ func matchBlocks(old, new []block) (moves []blockMove, restOld, restNew block) {
 		}
 	}
 
-	// A matched pair is "moved" when its old index breaks the
-	// ascending order established by the pairs before it.
-	lastOld := -1
+	// The longest run of matched pairs in ascending old order stays in
+	// place; every other matched pair moved. A greedy scan would
+	// instead blame every block after one that moved to the front.
+	// The run is searched from the end so ties keep the blocks earliest
+	// in new order: of two swapped blocks, the later one moved.
+	var pairedNew, pairedOld []int
 	for i, oi := range matched {
 		if oi < 0 {
 			restNew.lines = append(restNew.lines, new[i].lines...)
 			restNew.addrs = append(restNew.addrs, new[i].addrs...)
 			continue
 		}
-		if oi < lastOld {
+		pairedNew = append(pairedNew, i)
+		pairedOld = append(pairedOld, oi)
+	}
+	n := len(pairedOld)
+	reversed := make([]int, n)
+	for k, oi := range pairedOld {
+		reversed[n-1-k] = -oi
+	}
+	inPlace := make([]bool, n)
+	for _, k := range fndiff.LongestIncreasing(reversed) {
+		inPlace[n-1-k] = true
+	}
+	for k, i := range pairedNew {
+		if !inPlace[k] {
 			moves = append(moves, blockMove{
-				oldAddr: old[oi].addrs[0],
+				oldAddr: old[pairedOld[k]].addrs[0],
 				newAddr: new[i].addrs[0],
 				insts:   len(new[i].lines),
 			})
-			continue
 		}
-		lastOld = oi
 	}
 	for i, b := range old {
 		if !usedOld[i] {

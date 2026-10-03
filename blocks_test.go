@@ -84,6 +84,28 @@ func TestMatchBlocks_ReportsMovesAndLeftovers(t *testing.T) {
 	}
 }
 
+func TestMatchBlocks_OneBlockMovedToFrontReportsOneMove(t *testing.T) {
+	a := mkBlock(0x100, "alpha", "RET")
+	b := mkBlock(0x108, "beta", "RET")
+	c := mkBlock(0x110, "gamma", "RET")
+	d := mkBlock(0x118, "delta", "RET")
+
+	moves, _, _ := matchBlocks(
+		[]block{a, b, c, d},
+		[]block{
+			mkBlock(0x200, "delta", "RET"),
+			mkBlock(0x208, "alpha", "RET"),
+			mkBlock(0x210, "beta", "RET"),
+			mkBlock(0x218, "gamma", "RET"),
+		},
+	)
+
+	want := []blockMove{{oldAddr: 0x118, newAddr: 0x200, insts: 2}}
+	if diff := cmp.Diff(want, moves, cmp.AllowUnexported(blockMove{})); diff != "" {
+		t.Errorf("moves mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestMatchBlocks_IdenticalSidesNoOutput(t *testing.T) {
 	a := mkBlock(0x100, "alpha", "RET")
 	b := mkBlock(0x108, "beta", "RET")
