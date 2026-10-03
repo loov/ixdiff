@@ -1,8 +1,6 @@
 package norm
 
 import (
-	"bytes"
-
 	"golang.org/x/arch/x86/x86asm"
 )
 
@@ -27,11 +25,14 @@ func relocOnlyX86(oldCode, newCode []byte, oldAddr, newAddr uint64,
 	oldSym, newSym SymLookup, oldData, newData DataLookup, mode int) bool {
 	off := 0
 	for off < len(oldCode) {
-		oi, oerr := x86asm.Decode(oldCode[off:], mode)
-		ni, nerr := x86asm.Decode(newCode[off:], mode)
+		oi, oerr := decodeX86(oldCode[off:], mode)
+		ni, nerr := decodeX86(newCode[off:], mode)
 		if oerr != nil || nerr != nil || oi.Op == 0 || ni.Op == 0 {
-			// Undecodable tail (alignment padding): exact match only.
-			return bytes.Equal(oldCode[off:], newCode[off:])
+			// Without instruction boundaries the remaining bytes cannot
+			// be checked: equal displacements at shifted addresses can
+			// reach different symbols, so even an exact byte match
+			// proves nothing. Full analysis decides.
+			return false
 		}
 		if oi.Op != ni.Op || oi.Len != ni.Len || oi.Prefix != ni.Prefix {
 			return false
@@ -115,4 +116,28 @@ func relocOnlyX86(oldCode, newCode []byte, oldAddr, newAddr uint64,
 		off += oi.Len
 	}
 	return true
+}
+
+// decodeX86 decodes one instruction, correcting the length of
+// VZEROUPPER and VZEROALL: x86asm decodes them with a ModRM byte they
+// do not have, swallowing the first byte of the next instruction (in
+// Go's memmove, the F3 prefix of a MOVOU or a whole RET), after which
+// the walk is out of step with the real instructions.
+func decodeX86(code []byte, mode int) (x86asm.Inst, error) {
+	in, err := x86asm.Decode(code, mode)
+	if err != nil || (in.Op != x86asm.VZEROUPPER && in.Op != x86asm.VZEROALL) {
+		return in, err
+	}
+	// The instruction is its VEX prefix plus the 0x77 opcode byte.
+	switch code[0] {
+	case 0xC5:
+		in.Len = 3
+	case 0xC4:
+		in.Len = 4
+	default:
+		// Prefixed beyond what the correction understands; report it
+		// as undecodable so only an exact match is accepted.
+		return in, x86asm.ErrUnrecognized
+	}
+	return in, nil
 }

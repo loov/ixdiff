@@ -809,6 +809,7 @@ func TestRelocOnly_AMD64(t *testing.T) {
 		return []byte{0x48, 0x8b, 0x05, byte(disp), byte(disp >> 8), byte(disp >> 16), byte(disp >> 24)}
 	}
 	ret := []byte{0xc3}
+	vzeroupper := []byte{0xc5, 0xf8, 0x77}
 	cat := func(bs ...[]byte) []byte { return bytes.Join(bs, nil) }
 
 	tests := []struct {
@@ -868,6 +869,32 @@ func TestRelocOnly_AMD64(t *testing.T) {
 			name: "rip-relative load switched to different global",
 			old:  cat(mov(0x5039), ret),
 			new:  cat(mov(0x6139), ret),
+			want: false,
+		},
+		{
+			// The call ends at offset 8. old: 0x10008+0xff8 = 0x11000
+			// (callee); new: 0x20008+0x1ff8 = 0x22000. x86asm decodes
+			// VZEROUPPER with a phantom ModRM byte, which swallowed the
+			// CALL opcode and threw the walk out of step.
+			name: "same callee after vzeroupper at shifted address",
+			old:  cat(vzeroupper, call(0xff8), ret),
+			new:  cat(vzeroupper, call(0x1ff8), ret),
+			want: true,
+		},
+		{
+			// Equal bytes at the shifted address reach 0x21000, which
+			// resolves to nothing: the callee changed.
+			name: "retargeted call after vzeroupper",
+			old:  cat(vzeroupper, call(0xff8), ret),
+			new:  cat(vzeroupper, call(0xff8), ret),
+			want: false,
+		},
+		{
+			// 0x06 does not decode in 64-bit mode; the equal bytes
+			// behind it must not be accepted unexamined.
+			name: "retargeted call after undecodable byte",
+			old:  cat([]byte{0x06}, call(0xffa), ret),
+			new:  cat([]byte{0x06}, call(0xffa), ret),
 			want: false,
 		},
 		{
