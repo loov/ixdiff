@@ -105,3 +105,14 @@ func TestCmdDiff_Execute_RejectsUnknownSortOrder(t *testing.T) {
 		t.Error("expected error for --sort bogus, got nil")
 	}
 }
+
+func TestCmdDiff_Execute_RejectsNegativeTop(t *testing.T) {
+	got, err := parse(t, "--top", "-1", "a", "b")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = got.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "--top") {
+		t.Errorf("Execute with --top -1 = %v, want a --top error", err)
+	}
+}

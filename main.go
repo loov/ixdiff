@@ -152,6 +152,9 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		fmt.Fprintln(clingy.Stdout(ctx), version())
 		return nil
 	}
+	if c.top < 0 {
+		return fmt.Errorf("--top must not be negative, got %d", c.top)
+	}
 	switch c.sortBy {
 	case "size", "insts", "spills", "slots", "name":
 	default:
