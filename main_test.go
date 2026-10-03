@@ -116,3 +116,14 @@ func TestCmdDiff_Execute_RejectsNegativeTop(t *testing.T) {
 		t.Errorf("Execute with --top -1 = %v, want a --top error", err)
 	}
 }
+
+func TestCmdDiff_Execute_SingleBinaryRejectsComparisonFlags(t *testing.T) {
+	got, err := parse(t, "--json", "--filter", "main.", "a")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = got.Execute(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "--filter, --json") {
+		t.Errorf("Execute = %v, want an error naming --filter and --json", err)
+	}
+}

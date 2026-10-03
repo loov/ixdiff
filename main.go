@@ -172,6 +172,11 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 			return fmt.Errorf("unknown --state %q, expected changed, added, or removed", s)
 		}
 	}
+	if c.newPath == "" {
+		if flags := c.comparisonFlags(); len(flags) > 0 {
+			return fmt.Errorf("%s need two binaries, got only %q", strings.Join(flags, ", "), c.oldPath)
+		}
+	}
 	var err error
 	if c.pal, err = resolvePalette(c.color); err != nil {
 		return err
@@ -250,6 +255,28 @@ func (c *cmdDiff) Execute(ctx context.Context) error {
 		return c.writeAll(stdout, d, pairs)
 	}
 	return nil
+}
+
+// comparisonFlags lists the set flags that only apply to a comparison
+// of two binaries, so single-binary mode can reject them instead of
+// silently ignoring them. An explicit --sort size is indistinguishable
+// from the default and passes.
+func (c *cmdDiff) comparisonFlags() []string {
+	var flags []string
+	add := func(set bool, name string) {
+		if set {
+			flags = append(flags, name)
+		}
+	}
+	add(len(c.filters) > 0, "--filter")
+	add(c.sortBy != "size", "--sort")
+	add(len(c.states) > 0, "--state")
+	add(c.maskSP, "--mask-sp")
+	add(c.json, "--json")
+	add(c.sideBy, "--side-by-side")
+	add(c.blocks, "--blocks")
+	add(c.all, "--all")
+	return flags
 }
 
 // writeHeapProfile writes the heap profile to path after a collection,

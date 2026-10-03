@@ -101,7 +101,8 @@ Other flags:
 With a single binary, `ixdiff app` prints its stats instead: function
 count, text size, instruction counts by opcode, and the largest packages
 and functions. `ixdiff --fn main.main app` prints the disassembly of one
-function.
+function. Flags that only make sense for a comparison, such as `--json`
+or `--filter`, are rejected.
 
 ## How it works
 
