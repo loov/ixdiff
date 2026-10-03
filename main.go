@@ -35,9 +35,9 @@ import (
 
 func main() {
 	// The flag is also declared in Setup so it appears in --help, but
-	// clingy requires the binary argument, so a bare --version is
-	// answered before it runs.
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
+	// clingy requires the binary argument, so --version is answered
+	// before it runs, whatever other flags accompany it.
+	if slices.Contains(os.Args[1:], "--version") {
 		fmt.Println(version())
 		return
 	}
