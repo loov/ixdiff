@@ -33,24 +33,22 @@ func writeStats(w io.Writer, bin *ixdiff.Binary, top int) error {
 	ops := ixdiff.OpCount{}
 	var spills, slots int
 	for _, f := range funcs {
-		o, err := f.Ops()
+		st, err := f.Stats()
 		if err != nil {
 			return fmt.Errorf("disassembling %s: %w", f.Name, err)
 		}
-		sp, _ := f.Spills()
-		sl, _ := f.StackSlots()
-		ops.Add(o)
-		spills += sp
-		slots += sl
+		ops.Add(st.Ops)
+		spills += st.Spills
+		slots += st.StackSlots
 		p := pkgs[f.Package]
 		if p == nil {
 			p = &pkgStat{name: f.Package}
 			pkgs[f.Package] = p
 		}
 		p.bytes += f.Size
-		p.insts += o.Total()
-		p.spills += sp
-		p.slots += sl
+		p.insts += st.Ops.Total()
+		p.spills += st.Spills
+		p.slots += st.StackSlots
 		p.funcs++
 	}
 	fmt.Fprintf(w, "total instructions: %d\n", ops.Total())

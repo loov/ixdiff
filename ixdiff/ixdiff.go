@@ -217,6 +217,26 @@ func (f *Func) StackSlots() (int, error) {
 	return slots, nil
 }
 
+// Stats is the per-function summary that [Func.Stats] computes from a
+// single disassembly.
+type Stats struct {
+	Ops        OpCount // as [Func.Ops]
+	Spills     int     // as [Func.Spills]
+	StackSlots int     // as [Func.StackSlots]
+}
+
+// Stats disassembles the function once and computes its opcode
+// histogram, spills, and stack slots together, which is cheaper than
+// calling [Func.Ops], [Func.Spills], and [Func.StackSlots] in turn.
+func (f *Func) Stats() (Stats, error) {
+	insts, err := f.decode()
+	if err != nil {
+		return Stats{}, err
+	}
+	spills, slots := countSpills(f.bin.obj.Arch, insts)
+	return Stats{Ops: countOps(ops(insts)), Spills: spills, StackSlots: slots}, nil
+}
+
 // decode disassembles the function.
 func (f *Func) decode() ([]norm.Inst, error) {
 	return f.bin.obj.Disassemble(f.obj)

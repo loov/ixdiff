@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/loov/ixdiff/internal/testbin"
 	"github.com/loov/ixdiff/ixdiff"
 )
@@ -90,6 +92,32 @@ func TestBinary_OpenReportsLayout(t *testing.T) {
 	// far too small for large inter-function gaps.
 	if pad := bin.Padding(); pad.Align <= 0 || pad.Large < 0 {
 		t.Errorf("Padding = %+v, want positive Align", pad)
+	}
+}
+
+func TestFunc_StatsMatchesSeparateMethods(t *testing.T) {
+	bin := open(t, base)
+	for _, f := range bin.Funcs() {
+		st, err := f.Stats()
+		if err != nil {
+			t.Fatalf("Stats(%s): %v", f.Name, err)
+		}
+		ops, err := f.Ops()
+		if err != nil {
+			t.Fatalf("Ops(%s): %v", f.Name, err)
+		}
+		spills, err := f.Spills()
+		if err != nil {
+			t.Fatalf("Spills(%s): %v", f.Name, err)
+		}
+		slots, err := f.StackSlots()
+		if err != nil {
+			t.Fatalf("StackSlots(%s): %v", f.Name, err)
+		}
+		want := ixdiff.Stats{Ops: ops, Spills: spills, StackSlots: slots}
+		if diff := cmp.Diff(want, st); diff != "" {
+			t.Fatalf("Stats(%s) mismatch (-want +got):\n%s", f.Name, diff)
+		}
 	}
 }
 
