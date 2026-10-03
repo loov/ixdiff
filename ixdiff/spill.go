@@ -90,7 +90,7 @@ var spName = map[string]string{
 // bytes with no per-site stack operand and are likewise invisible.
 func countSpills(arch string, insts []norm.Inst) (spills, slots int) {
 	// alias is the set of registers currently holding a stack address.
-	// ponytail: linear scan, no control flow — the compiler defines the
+	// It is a linear scan without control flow: the compiler defines the
 	// scratch register right before its uses, so joins never matter.
 	alias := map[string]bool{}
 	sp := spName[arch]

@@ -158,7 +158,7 @@ func matchBlocks(old, new []block) (moves []blockMove, restOld, restNew block) {
 // compiler reordered basic blocks (e.g. PGO), where a linear diff
 // drowns in relocation of unchanged code.
 //
-// ponytail: a block that both moved and changed shows as delete plus
+// A block that both moved and changed shows as delete plus
 // insert; fuzzy block matching would pair those, add it if PGO
 // comparisons need it. Measured on a real PGO pair (ixdiff built with
 // and without a profile of itself, 2026-07): moved-and-changed blocks
