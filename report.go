@@ -349,16 +349,17 @@ func writeDiffHeader(w io.Writer, p ixdiff.Pair) {
 }
 
 // hunkRange describes a hunk by the first old- and new-side addresses
-// it covers.
+// it covers. Sides are found by edit kind rather than by a nonzero
+// address: wasm function indices and archive offsets start at zero.
 func hunkRange(hunk []ixdiff.Line) string {
 	var oldAddr, newAddr uint64
-	for _, l := range hunk {
-		if oldAddr == 0 && l.OldAddr != 0 {
-			oldAddr = l.OldAddr
-		}
-		if newAddr == 0 && l.NewAddr != 0 {
-			newAddr = l.NewAddr
-		}
+	oldIdx := slices.IndexFunc(hunk, func(l ixdiff.Line) bool { return l.Op != ixdiff.Insert })
+	if oldIdx >= 0 {
+		oldAddr = hunk[oldIdx].OldAddr
+	}
+	newIdx := slices.IndexFunc(hunk, func(l ixdiff.Line) bool { return l.Op != ixdiff.Delete })
+	if newIdx >= 0 {
+		newAddr = hunk[newIdx].NewAddr
 	}
 	return fmt.Sprintf("-%x +%x", oldAddr, newAddr)
 }

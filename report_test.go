@@ -199,3 +199,16 @@ func TestHunks_ShortEqualRunStaysInOneHunk(t *testing.T) {
 		t.Errorf("hunk has %d lines, want 6", len(got[0]))
 	}
 }
+
+func TestHunkRange_KeepsZeroAddresses(t *testing.T) {
+	// wasm function indices and archive offsets start at zero; a
+	// zero-address first line must not be skipped for a later one.
+	hunk := []ixdiff.Line{
+		{Op: ixdiff.Delete, OldAddr: 0, Text: "a"},
+		{Op: ixdiff.Insert, NewAddr: 0, Text: "b"},
+		{Op: ixdiff.Equal, OldAddr: 2, NewAddr: 2, Text: "c"},
+	}
+	if got, want := hunkRange(hunk), "-0 +0"; got != want {
+		t.Errorf("hunkRange = %q, want %q", got, want)
+	}
+}
