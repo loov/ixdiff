@@ -6,6 +6,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/loov/ixdiff/internal/fndiff"
 	"github.com/loov/ixdiff/ixdiff"
@@ -440,11 +441,7 @@ func writeHunksSide(w io.Writer, lines []ixdiff.Line, pal palette) {
 			if l == nil {
 				return ""
 			}
-			s := fmt.Sprintf("%x: %s", addr, alignedOf[l])
-			if len(s) > sideColumnWidth {
-				s = s[:sideColumnWidth-3] + "..."
-			}
-			return s
+			return truncate(fmt.Sprintf("%x: %s", addr, alignedOf[l]), sideColumnWidth)
 		}
 		show := func(l *ixdiff.Line, addr uint64) string {
 			s := plain(l, addr)
@@ -458,7 +455,7 @@ func writeHunksSide(w io.Writer, lines []ixdiff.Line, pal palette) {
 		width := 0
 		for _, row := range rows {
 			if row.old != nil {
-				width = max(width, len(plain(row.old, row.old.OldAddr)))
+				width = max(width, utf8.RuneCountInString(plain(row.old, row.old.OldAddr)))
 			}
 		}
 		for _, row := range rows {
@@ -467,7 +464,7 @@ func writeHunksSide(w io.Writer, lines []ixdiff.Line, pal palette) {
 			marker := ' '
 			if row.old != nil {
 				left = show(row.old, row.old.OldAddr)
-				pad = width - len(plain(row.old, row.old.OldAddr))
+				pad = width - utf8.RuneCountInString(plain(row.old, row.old.OldAddr))
 			}
 			if row.new != nil {
 				right = show(row.new, row.new.NewAddr)
@@ -492,6 +489,21 @@ func writeHunksSide(w io.Writer, lines []ixdiff.Line, pal palette) {
 			fmt.Fprintf(w, "%s %c %s\n", left, marker, right)
 		}
 	}
+}
+
+// truncate cuts s to at most n runes, marking a cut with "...". It
+// counts runes rather than bytes so a symbol name with non-ASCII
+// characters is neither split mid-character nor misaligned.
+func truncate(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	i := 0
+	for range n - 3 {
+		_, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+	}
+	return s[:i] + "..."
 }
 
 func abs(v int) int {

@@ -212,3 +212,24 @@ func TestHunkRange_KeepsZeroAddresses(t *testing.T) {
 		t.Errorf("hunkRange = %q, want %q", got, want)
 	}
 }
+
+func TestTruncate_CutsOnRuneBoundaries(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		n    int
+		want string
+	}{
+		{name: "fits", s: "main.f", n: 6, want: "main.f"},
+		{name: "ascii", s: "main.function", n: 8, want: "main...."},
+		{name: "multibyte fits by runes", s: "main.café", n: 9, want: "main.café"},
+		{name: "multibyte cut", s: "pkg.ééééé", n: 8, want: "pkg.é..."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := truncate(tt.s, tt.n); got != tt.want {
+				t.Errorf("truncate(%q, %d) = %q, want %q", tt.s, tt.n, got, tt.want)
+			}
+		})
+	}
+}
