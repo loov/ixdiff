@@ -1,12 +1,12 @@
 package norm
 
 import (
-	"github.com/loov/disasm/analysis"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/loov/disasm/analysis"
 	"github.com/loov/disasm/objfile"
 )
 
