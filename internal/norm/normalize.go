@@ -1,6 +1,7 @@
 package norm
 
 import (
+	"github.com/loov/disasm/analysis"
 	"regexp"
 	"slices"
 	"strconv"
@@ -231,43 +232,6 @@ var (
 	rvMovReg = regexp.MustCompile(`^MOV (X\d+), (X\d+)$`)
 )
 
-// spPattern builds a stack-displacement matcher for the given register
-// tail alternatives: an optional hex (amd64/386/arm) or decimal
-// (everything else) offset followed by the captured register part.
-func spPattern(tail string) *regexp.Regexp {
-	return regexp.MustCompile(`^(?:-?(?:0x[0-9a-f]+|\d+))?(` + tail + `)$`)
-}
-
-// spDisp maps each architecture to the operand pattern of its
-// stack-pointer displacements, as rendered by GoSyntax: 0x10(SP) on
-// amd64/386, -112(RSP) on arm64, 16(X2) on riscv64, -128(R1) on ppc64,
-// 48(R3) on loong64, -0x50(R13) on arm, and on s390x both the plain
-// -104(R15) form and the indexed -104(R0)(R15*1) form. Wasm has no
-// stack-pointer register, so it is absent and MaskSP is a no-op.
-// ArchUnknown keeps the legacy SP|RSP|X2 pattern so callers that never
-// set Options.Arch behave as before.
-var spDisp = map[string]*regexp.Regexp{
-	"":        spPattern(`\(SP\)|\(RSP\)|\(X2\)`),
-	"amd64":   spPattern(`\(SP\)`),
-	"386":     spPattern(`\(SP\)`),
-	"arm64":   spPattern(`\(RSP\)`),
-	"riscv64": spPattern(`\(X2\)`),
-	"ppc64":   spPattern(`\(R1\)`),
-	"ppc64le": spPattern(`\(R1\)`),
-	"loong64": spPattern(`\(R3\)`),
-	"arm":     spPattern(`\(R13\)`),
-	"s390x":   spPattern(`\(R15\)|\(R0\)\(R15\*1\)`),
-}
-
-// IsStackRef reports whether a rendered operand is a stack-pointer
-// displacement on the given architecture, such as 0x10(SP) on amd64 or
-// -112(RSP) on arm64. Wasm has no stack-pointer register, so every
-// operand reports false.
-func IsStackRef(arch string, arg string) bool {
-	re := spDisp[arch]
-	return re != nil && re.MatchString(arg)
-}
-
 // wasmTypeIdx matches a WAT type-index immediate, as printed for
 // call_indirect and typed blocks.
 var wasmTypeIdx = regexp.MustCompile(`\(type \d+\)`)
@@ -305,10 +269,8 @@ func wasmNorm(in Inst, opts Options) (string, bool) {
 // registers currently holding an ADRP page address to that page.
 func (n *norm) arg(in Inst, arg string, adrp map[string]uint64) string {
 	if n.opts.MaskSP {
-		if re := spDisp[n.opts.Arch]; re != nil {
-			if m := re.FindStringSubmatch(arg); m != nil {
-				return "<sp>" + m[1]
-			}
+		if reg, ok := analysis.StackRef(n.opts.Arch, arg); ok {
+			return "<sp>" + reg
 		}
 	}
 	if m := dispArg.FindStringSubmatch(arg); m != nil {
